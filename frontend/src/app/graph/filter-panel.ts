@@ -8,7 +8,14 @@
  * Reference: SPEC.md §7.2 — Graph operations
  */
 
-import { Component, inject, input, output, signal } from "@angular/core";
+import {
+  Component,
+  inject,
+  input,
+  output,
+  signal,
+  OnDestroy,
+} from "@angular/core";
 import { FormsModule } from "@angular/forms";
 import { MatButtonModule } from "@angular/material/button";
 import { MatCheckboxModule } from "@angular/material/checkbox";
@@ -38,7 +45,7 @@ import type { TransitionMethod } from "./graph-converter";
   templateUrl: "./filter-panel.html",
   styleUrl: "./filter-panel.scss",
 })
-export class FilterPanelComponent {
+export class FilterPanelComponent implements OnDestroy {
   private filterService = inject(GraphFilterService);
 
   /** The Cytoscape Core instance to operate on. */
@@ -54,6 +61,9 @@ export class FilterPanelComponent {
 
   /** Number of search matches found. */
   readonly searchResultCount = signal<number | null>(null);
+
+  /** Timeout handle for search debounce. */
+  private searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Available variant types for the highlight selector. */
   readonly variantTypes: { value: VariantType; label: string }[] = [
@@ -79,12 +89,24 @@ export class FilterPanelComponent {
     }
   }
 
-  /** Handle search input. */
+  /** Handle search input with 300ms debounce. */
   onSearch(query: string): void {
-    const cy = this.cy();
-    if (cy) {
-      const count = this.filterService.searchAndFocus(cy, query);
-      this.searchResultCount.set(query.trim() ? count : null);
+    if (this.searchDebounceTimer !== null) {
+      clearTimeout(this.searchDebounceTimer);
+    }
+    this.searchDebounceTimer = setTimeout(() => {
+      this.searchDebounceTimer = null;
+      const cy = this.cy();
+      if (cy) {
+        const count = this.filterService.searchAndFocus(cy, query);
+        this.searchResultCount.set(query.trim() ? count : null);
+      }
+    }, 300);
+  }
+
+  ngOnDestroy(): void {
+    if (this.searchDebounceTimer !== null) {
+      clearTimeout(this.searchDebounceTimer);
     }
   }
 

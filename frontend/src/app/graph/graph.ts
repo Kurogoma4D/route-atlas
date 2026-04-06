@@ -113,9 +113,15 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
     this.cyInstance()?.elements().unselect();
   }
 
-  /** Toggle the filter/export panel. */
+  /** Toggle the filter/export panel. Closes detail panel when opening. */
   toggleFilterPanel(): void {
-    this.filterPanelOpen.update((open) => !open);
+    this.filterPanelOpen.update((open) => {
+      if (!open) {
+        // Close detail panel when opening filter panel
+        this.selectedNode.set(null);
+      }
+      return !open;
+    });
   }
 
   /** Fit the graph to the viewport. */
@@ -318,6 +324,9 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private onNodeClick(node: NodeSingular): void {
+    // Close filter panel when opening detail panel
+    this.filterPanelOpen.set(false);
+
     const data = node.data();
     const transitions = this.analysisResult?.transitions ?? [];
     const outgoing = transitions.filter(

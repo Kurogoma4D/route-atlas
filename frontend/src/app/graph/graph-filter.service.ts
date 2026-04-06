@@ -63,11 +63,14 @@ export class GraphFilterService {
     const filters = this.transitionFilters();
     const methods: TransitionMethod[] = ["link", "programmatic", "redirect"];
     for (const method of methods) {
-      const edges = cy.edges(`[method = "${method}"]`) as CollectionReturnValue;
+      const edges = cy.edges(
+        `[method = "${method}"]`,
+      ) as CollectionReturnValue;
       if (filters[method]) {
-        edges.style("display", "element");
+        // show()/hide() are available at runtime but missing from @types/cytoscape
+        (edges as unknown as { show(): void }).show();
       } else {
-        edges.style("display", "none");
+        (edges as unknown as { hide(): void }).hide();
       }
     }
   }
@@ -87,12 +90,14 @@ export class GraphFilterService {
     }
 
     // Find nodes whose variants array contains the target type
-    cy.nodes("[!isGroup]").forEach((node) => {
-      const variants = node.data("variants") as { type: string }[] | undefined;
-      if (variants?.some((v) => v.type === variantType)) {
-        node.addClass("variant-highlight");
-      }
-    });
+    cy.nodes("[!isGroup]")
+      .filter((node) => {
+        const variants = node.data("variants") as
+          | { type: string }[]
+          | undefined;
+        return variants?.some((v) => v.type === variantType) ?? false;
+      })
+      .addClass("variant-highlight");
   }
 
   /**
@@ -136,16 +141,17 @@ export class GraphFilterService {
 
   /**
    * Export the current graph as a PNG image and trigger a download.
-   * Hidden nodes/edges (from filters) are automatically excluded by Cytoscape.
+   * Uses `full: true` to capture the entire graph and `hide()/show()` to ensure
+   * hidden elements are excluded from the export output.
    */
   exportPng(cy: Core, filename = "route-atlas-graph.png"): void {
     const pngData = cy.png({
       output: "blob",
       bg: "#ffffff",
-      full: false,
+      full: true,
       scale: 2,
-    });
-    this.downloadBlob(pngData as unknown as Blob, filename);
+    } as cytoscape.ExportBlobOptions);
+    this.downloadBlob(pngData as Blob, filename);
   }
 
   /**
@@ -160,7 +166,7 @@ export class GraphFilterService {
       svg?: (options?: Record<string, unknown>) => string;
     };
     if (typeof cyAny.svg === "function") {
-      const svgContent = cyAny.svg({ full: false, bg: "#ffffff", scale: 2 });
+      const svgContent = cyAny.svg({ full: true, bg: "#ffffff", scale: 2 });
       const blob = new Blob([svgContent], { type: "image/svg+xml" });
       this.downloadBlob(blob, filename);
     } else {
@@ -180,6 +186,6 @@ export class GraphFilterService {
     anchor.download = filename;
     anchor.click();
     // Clean up the object URL after a short delay
-    setTimeout(() => URL.revokeObjectURL(url), 100);
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 }

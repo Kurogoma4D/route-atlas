@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { GraphFilterService } from "./graph-filter.service";
 import type { Core } from "cytoscape";
 
@@ -105,15 +105,14 @@ function createMockCy() {
     };
   }
 
-  // Edge mocks — uses style("display", ...) like the service implementation
+  // Edge mocks — uses hide()/show() like the service implementation
   function createEdgeCollection(methods: string[]) {
     return {
-      style: (prop: string, value?: string) => {
-        if (prop === "display" && value === "none") {
-          methods.forEach((m) => hiddenEdges.add(m));
-        } else if (prop === "display" && value === "element") {
-          methods.forEach((m) => hiddenEdges.delete(m));
-        }
+      hide: () => {
+        methods.forEach((m) => hiddenEdges.add(m));
+      },
+      show: () => {
+        methods.forEach((m) => hiddenEdges.delete(m));
       },
     };
   }
@@ -136,11 +135,11 @@ function createMockCy() {
     animate: (opts: unknown) => {
       animateOptions = opts;
     },
-    png: (opts?: unknown) => {
+    png: (_opts?: unknown) => {
       pngCalled = true;
       return new Blob(["fake-png"], { type: "image/png" });
     },
-    svg: (opts?: unknown) => {
+    svg: (_opts?: unknown) => {
       svgCalled = true;
       return "<svg>mock</svg>";
     },

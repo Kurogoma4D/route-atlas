@@ -1,6 +1,6 @@
 import { TestBed } from "@angular/core/testing";
 import { provideAnimationsAsync } from "@angular/platform-browser/animations/async";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { FilterPanelComponent } from "./filter-panel";
 import { GraphFilterService } from "./graph-filter.service";
 

@@ -53,8 +53,9 @@
       <mat-label>Screen name or path</mat-label>
       <input
         matInput
+        #searchInput
         [value]="searchQuery()"
-        (input)="onSearch($any($event.target).value)"
+        (input)="onSearch(searchInput.value)"
         placeholder="e.g. /dashboard"
       />
       <mat-icon matSuffix>search</mat-icon>
