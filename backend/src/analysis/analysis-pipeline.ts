@@ -68,14 +68,29 @@ export interface AnalysisPipelineInput {
 
 /**
  * Parse a JSON response from the LLM, stripping optional markdown fences.
+ *
+ * @param raw       The raw LLM response string
+ * @param validate  Optional runtime validator. Receives the parsed value and
+ *                  should throw (or return false) if the shape is wrong.
  */
-function parseLLMJson<T>(raw: string): T {
+function parseLLMJson<T>(
+  raw: string,
+  validate?: (value: unknown) => boolean,
+): T {
   // Strip markdown code fences if present
   let cleaned = raw.trim();
   if (cleaned.startsWith("```")) {
     cleaned = cleaned.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
   }
-  return JSON.parse(cleaned) as T;
+  const parsed: unknown = JSON.parse(cleaned);
+
+  if (validate && !validate(parsed)) {
+    throw new Error(
+      `LLM returned JSON that failed runtime validation: ${cleaned.slice(0, 200)}`,
+    );
+  }
+
+  return parsed as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -126,15 +141,30 @@ export class AnalysisPipeline {
       content: turn1Response.content,
     });
 
-    const rawScreens = parseLLMJson<RawScreen[]>(turn1Response.content);
+    const isArray = (v: unknown): boolean => Array.isArray(v);
+
+    const rawScreens = parseLLMJson<RawScreen[]>(
+      turn1Response.content,
+      isArray,
+    );
 
     // ------------------------------------------------------------------
-    // Turn 2 — extract variants for each screen
+    // Turn 2 — extract variants for each screen (parallelised in batches)
+    //
+    // Turn 2 calls are independent per-screen and do NOT contribute to
+    // the shared conversation history — only Turn 1 context is kept for
+    // Turn 3 (the screen list is passed explicitly).
     // ------------------------------------------------------------------
-    const screensWithVariants: Screen[] = [];
+    const TURN2_BATCH_SIZE = 5;
 
-    for (const rawScreen of rawScreens) {
-      const componentSource = input.componentFiles.find(
+    async function extractVariants(
+      adapter: LLMAdapter,
+      rawScreen: RawScreen,
+      componentFiles: { path: string; content: string }[],
+      baseMessages: ChatMessage[],
+      selectedModel: string,
+    ): Promise<Screen> {
+      const componentSource = componentFiles.find(
         (f) => f.path === rawScreen.componentFile,
       );
 
@@ -147,25 +177,34 @@ export class AnalysisPipeline {
           componentSource.content,
         );
 
-        conversationHistory.push({ role: "user", content: turn2Prompt });
-
-        const turn2Response = await this.adapter.chatCompletion({
-          model,
-          messages: [...conversationHistory],
+        const turn2Response = await adapter.chatCompletion({
+          model: selectedModel,
+          messages: [...baseMessages, { role: "user", content: turn2Prompt }],
         });
 
-        conversationHistory.push({
-          role: "assistant",
-          content: turn2Response.content,
-        });
-
-        variants = parseLLMJson<Variant[]>(turn2Response.content);
+        variants = parseLLMJson<Variant[]>(turn2Response.content, isArray);
       }
 
-      screensWithVariants.push({
-        ...rawScreen,
-        variants,
-      });
+      return { ...rawScreen, variants };
+    }
+
+    const screensWithVariants: Screen[] = [];
+    const turn1Context: ChatMessage[] = [...conversationHistory];
+
+    for (let i = 0; i < rawScreens.length; i += TURN2_BATCH_SIZE) {
+      const batch = rawScreens.slice(i, i + TURN2_BATCH_SIZE);
+      const batchResults = await Promise.all(
+        batch.map((screen) =>
+          extractVariants(
+            this.adapter,
+            screen,
+            input.componentFiles,
+            turn1Context,
+            model,
+          ),
+        ),
+      );
+      screensWithVariants.push(...batchResults);
     }
 
     // ------------------------------------------------------------------
@@ -184,7 +223,10 @@ export class AnalysisPipeline {
       messages: [...conversationHistory],
     });
 
-    const transitions = parseLLMJson<Transition[]>(turn3Response.content);
+    const transitions = parseLLMJson<Transition[]>(
+      turn3Response.content,
+      isArray,
+    );
 
     return {
       framework: input.framework,

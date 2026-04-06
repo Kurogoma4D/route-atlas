@@ -74,7 +74,19 @@ export type LLMAdapterFactory = (githubToken: string) => LLMAdapter;
 
 export interface CopilotClientEntry {
   adapter: LLMAdapter;
-  createdAt: number;
+  tokenHash: string;
+}
+
+/**
+ * Produce a simple hash of a token string for comparison purposes.
+ * Uses djb2 algorithm — not cryptographic, but sufficient for change detection.
+ */
+export function hashToken(token: string): string {
+  let hash = 5381;
+  for (let i = 0; i < token.length; i++) {
+    hash = (hash * 33) ^ token.charCodeAt(i);
+  }
+  return (hash >>> 0).toString(36);
 }
 
 export class CopilotClientManager {
@@ -88,17 +100,27 @@ export class CopilotClientManager {
   /**
    * Get or create an `LLMAdapter` for the given user.
    *
+   * If the token has changed since the last call (detected via hash comparison),
+   * the stale adapter is disposed and a fresh one is created.
+   *
    * @param userId  Unique user identifier (e.g. GitHub login)
    * @param token   The user's OAuth access token
    */
   getClient(userId: string, token: string): LLMAdapter {
+    const incoming = hashToken(token);
     const existing = this.clients.get(userId);
-    if (existing) {
+
+    if (existing && existing.tokenHash === incoming) {
       return existing.adapter;
     }
 
+    // Token changed (or first call) — dispose old adapter if present
+    if (existing) {
+      existing.adapter.dispose();
+    }
+
     const adapter = this.factory(token);
-    this.clients.set(userId, { adapter, createdAt: Date.now() });
+    this.clients.set(userId, { adapter, tokenHash: incoming });
     return adapter;
   }
 

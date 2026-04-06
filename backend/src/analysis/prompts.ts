@@ -71,7 +71,7 @@ Look for:
 - Empty states (no-data messages, empty list placeholders)
 - Authentication-required states (login redirects, auth guards)
 - Permission-based rendering (role checks, admin-only sections)
-- Responsive variants (media queries, breakpoint-based rendering)
+- Responsive variants (conditional rendering based on screen size, breakpoint checks in component logic)
 - Other conditional rendering (feature flags, A/B tests)
 
 For each variant return:

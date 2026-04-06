@@ -279,6 +279,36 @@ describe("AnalysisPipeline", () => {
     expect(result.screens[0]!.variants).toEqual([]);
   });
 
+  it("throws when LLM returns non-JSON content", async () => {
+    const badAdapter = createMockAdapter([
+      "This is not JSON at all, sorry!",
+    ]);
+    const badPipeline = new AnalysisPipeline(badAdapter);
+
+    await expect(
+      badPipeline.run({
+        framework: "angular",
+        routingFiles: [SAMPLE_ROUTING_FILE],
+        componentFiles: SAMPLE_COMPONENT_FILES,
+      }),
+    ).rejects.toThrow(); // SyntaxError from JSON.parse
+  });
+
+  it("throws when LLM returns valid JSON but wrong shape (object instead of array)", async () => {
+    const badAdapter = createMockAdapter([
+      JSON.stringify({ not: "an array" }),
+    ]);
+    const badPipeline = new AnalysisPipeline(badAdapter);
+
+    await expect(
+      badPipeline.run({
+        framework: "angular",
+        routingFiles: [SAMPLE_ROUTING_FILE],
+        componentFiles: SAMPLE_COMPONENT_FILES,
+      }),
+    ).rejects.toThrow("failed runtime validation");
+  });
+
   it("propagates LLM errors", async () => {
     const errorAdapter: LLMAdapter = {
       chatCompletion: vi

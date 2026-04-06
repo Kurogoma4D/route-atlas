@@ -75,4 +75,27 @@ describe("CopilotClientManager", () => {
     manager.getClient("user-1", "token-1");
     expect(manager.hasClient("user-1")).toBe(true);
   });
+
+  it("disposes and recreates adapter when token changes", () => {
+    const firstAdapter = manager.getClient("user-1", "token-1");
+    const secondAdapter = manager.getClient("user-1", "token-2");
+
+    // Old adapter should have been disposed
+    expect(firstAdapter.dispose).toHaveBeenCalledTimes(1);
+    // A new adapter should have been created
+    expect(secondAdapter).not.toBe(firstAdapter);
+    expect(factory).toHaveBeenCalledTimes(2);
+    expect(factory).toHaveBeenLastCalledWith("token-2");
+    // Only one entry in the map
+    expect(manager.size).toBe(1);
+  });
+
+  it("reuses adapter when same token is provided again", () => {
+    const first = manager.getClient("user-1", "token-1");
+    const second = manager.getClient("user-1", "token-1");
+
+    expect(first).toBe(second);
+    expect(first.dispose).not.toHaveBeenCalled();
+    expect(factory).toHaveBeenCalledTimes(1);
+  });
 });
