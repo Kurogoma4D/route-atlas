@@ -1,29 +1,62 @@
 import express from "express";
 import cors from "cors";
+import session from "express-session";
 import type { AnalysisResult } from "@route-atlas/shared";
+import { createAuthRouter, requireAuth } from "./auth/routes.js";
+// Session type augmentation loaded via auth/session.d.ts
 
-const app = express();
+export function createApp() {
+  const app = express();
 
-// TODO: Lock down CORS origin before deployment (currently allows all origins)
-app.use(cors());
-app.use(express.json());
+  const frontendOrigin =
+    process.env["FRONTEND_ORIGIN"] ?? "http://localhost:4200";
 
-app.get("/api/health", (_req, res) => {
-  const healthCheck: { status: string; timestamp: string } = {
-    status: "ok",
-    timestamp: new Date().toISOString(),
-  };
-  res.json(healthCheck);
-});
+  app.use(
+    cors({
+      origin: frontendOrigin,
+      credentials: true,
+    }),
+  );
+  app.use(express.json());
 
-// Placeholder endpoint for future analysis feature
-app.post("/api/analyze", (_req, res) => {
-  const placeholder: AnalysisResult = {
-    framework: "unknown",
-    screens: [],
-    transitions: [],
-  };
-  res.json(placeholder);
-});
+  app.use(
+    session({
+      secret: process.env["SESSION_SECRET"] ?? "default-dev-secret-key",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        secure: process.env["NODE_ENV"] === "production",
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000, // 24 hours
+        sameSite: "lax",
+      },
+    }),
+  );
 
+  app.get("/api/health", (_req, res) => {
+    const healthCheck: { status: string; timestamp: string } = {
+      status: "ok",
+      timestamp: new Date().toISOString(),
+    };
+    res.json(healthCheck);
+  });
+
+  // Auth routes
+  app.use("/api/auth", createAuthRouter());
+
+  // Protected: Placeholder endpoint for future analysis feature
+  app.post("/api/analyze", requireAuth, (_req, res) => {
+    const placeholder: AnalysisResult = {
+      framework: "unknown",
+      screens: [],
+      transitions: [],
+    };
+    res.json(placeholder);
+  });
+
+  return app;
+}
+
+// Default export for backward compatibility with existing tests
+const app = createApp();
 export { app };
