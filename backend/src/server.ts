@@ -3,6 +3,7 @@ import cors from "cors";
 import session from "express-session";
 import type { AnalysisResult } from "@route-atlas/shared";
 import { createAuthRouter, requireAuth } from "./auth/routes.js";
+import { createReposRouter } from "./repos/routes.js";
 // Session type augmentation loaded via auth/session.d.ts
 
 export function createApp() {
@@ -50,6 +51,9 @@ export function createApp() {
 
   // Auth routes
   app.use("/api/auth", createAuthRouter());
+
+  // Protected: Repository listing routes
+  app.use("/api/repos", requireAuth, createReposRouter());
 
   // Protected: Placeholder endpoint for future analysis feature
   app.post("/api/analyze", requireAuth, (_req, res) => {
