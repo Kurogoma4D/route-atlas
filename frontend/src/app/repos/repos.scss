@@ -1,0 +1,110 @@
+.repos-container {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+h2 {
+  margin-bottom: 16px;
+}
+
+.search-field {
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+.loading-container {
+  text-align: center;
+  padding: 32px 0;
+
+  p {
+    margin-top: 16px;
+    color: var(--mat-sys-on-surface-variant);
+  }
+}
+
+.error-card {
+  margin-bottom: 16px;
+}
+
+.error-message {
+  color: var(--mat-sys-error);
+  margin: 0 0 8px;
+}
+
+.empty-message {
+  text-align: center;
+  color: var(--mat-sys-on-surface-variant);
+  padding: 32px 0;
+}
+
+.repos-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.repo-list-section {
+  min-width: 0;
+}
+
+.repo-item {
+  padding: 4px 0;
+}
+
+.repo-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 500;
+}
+
+.repo-full-name {
+  word-break: break-all;
+}
+
+.private-icon {
+  font-size: 16px;
+  color: var(--mat-sys-on-surface-variant);
+}
+
+.repo-description {
+  font-size: 0.85rem;
+  color: var(--mat-sys-on-surface-variant);
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 0.8rem;
+  color: var(--mat-sys-on-surface-variant);
+  margin-top: 4px;
+}
+
+.load-more {
+  text-align: center;
+  margin-top: 16px;
+}
+
+.branch-section {
+  min-width: 0;
+}
+
+.branch-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.protected-icon {
+  font-size: 16px;
+  color: var(--mat-sys-on-surface-variant);
+}

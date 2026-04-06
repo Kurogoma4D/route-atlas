@@ -48,3 +48,34 @@ export interface AuthError {
   error: string;
   message: string;
 }
+
+export interface RepoInfo {
+  id: number;
+  name: string;
+  fullName: string;
+  owner: string;
+  description: string | null;
+  private: boolean;
+  defaultBranch: string;
+  language: string | null;
+  updatedAt: string;
+  htmlUrl: string;
+}
+
+export interface BranchInfo {
+  name: string;
+  commit: string;
+  protected: boolean;
+}
+
+export interface ReposResponse {
+  repos: RepoInfo[];
+  totalCount: number;
+  page: number;
+  perPage: number;
+  hasNextPage: boolean;
+}
+
+export interface BranchesResponse {
+  branches: BranchInfo[];
+}

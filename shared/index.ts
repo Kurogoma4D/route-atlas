@@ -6,4 +6,8 @@ export type {
   Transition,
   UserInfo,
   AuthError,
+  RepoInfo,
+  BranchInfo,
+  ReposResponse,
+  BranchesResponse,
 } from "./types";

@@ -1,0 +1,134 @@
+<div class="repos-container">
+  <h2>リポジトリ選択</h2>
+
+  <!-- Search -->
+  <mat-form-field class="search-field" appearance="outline">
+    <mat-label>リポジトリ名で検索</mat-label>
+    <mat-icon matPrefix>search</mat-icon>
+    <input
+      matInput
+      [value]="searchQuery()"
+      (input)="onSearchInput($any($event.target).value)"
+      placeholder="リポジトリ名を入力..."
+    />
+  </mat-form-field>
+
+  <!-- Loading -->
+  @if (loading()) {
+  <div class="loading-container">
+    <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+    <p>リポジトリを読み込み中...</p>
+  </div>
+  }
+
+  <!-- Error -->
+  @if (error()) {
+  <mat-card class="error-card">
+    <mat-card-content>
+      <p class="error-message">{{ error() }}</p>
+      <button mat-flat-button (click)="loadRepos()">再試行</button>
+    </mat-card-content>
+  </mat-card>
+  }
+
+  <!-- Repo list -->
+  @if (!loading() && !error()) {
+  <div class="repos-layout">
+    <div class="repo-list-section">
+      <mat-card>
+        <mat-card-content>
+          @if (filteredRepos().length === 0) {
+          <p class="empty-message">リポジトリが見つかりません。</p>
+          } @else {
+          <mat-selection-list [multiple]="false">
+            @for (repo of filteredRepos(); track repo.id) {
+            <mat-list-option
+              [selected]="selectedRepo()?.id === repo.id"
+              (click)="selectRepo(repo)"
+            >
+              <div class="repo-item">
+                <div class="repo-name">
+                  <span class="repo-full-name">{{ repo.fullName }}</span>
+                  @if (repo.private) {
+                  <mat-icon class="private-icon" inline>lock</mat-icon>
+                  }
+                </div>
+                @if (repo.description) {
+                <div class="repo-description">{{ repo.description }}</div>
+                }
+                <div class="repo-meta">
+                  @if (repo.language) {
+                  <span class="repo-language">{{ repo.language }}</span>
+                  }
+                </div>
+              </div>
+            </mat-list-option>
+            }
+          </mat-selection-list>
+          }
+        </mat-card-content>
+      </mat-card>
+
+      <!-- Load more -->
+      @if (hasNextPage()) {
+      <div class="load-more">
+        <button
+          mat-stroked-button
+          (click)="loadMore()"
+          [disabled]="loadingMore()"
+        >
+          @if (loadingMore()) {
+          <mat-spinner diameter="20"></mat-spinner>
+          } @else { さらに読み込む }
+        </button>
+      </div>
+      }
+    </div>
+
+    <!-- Branch selection panel -->
+    @if (selectedRepo()) {
+    <div class="branch-section">
+      <mat-card>
+        <mat-card-header>
+          <mat-card-title>{{ selectedRepo()!.fullName }}</mat-card-title>
+          <mat-card-subtitle>ブランチを選択してください</mat-card-subtitle>
+        </mat-card-header>
+        <mat-card-content>
+          @if (loadingBranches()) {
+          <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+          } @else if (branchError()) {
+          <p class="error-message">{{ branchError() }}</p>
+          } @else {
+          <mat-selection-list [multiple]="false">
+            @for (branch of branches(); track branch.name) {
+            <mat-list-option
+              [selected]="selectedBranch()?.name === branch.name"
+              (click)="selectBranch(branch)"
+            >
+              <div class="branch-item">
+                <span>{{ branch.name }}</span>
+                @if (branch.protected) {
+                <mat-icon class="protected-icon" inline>shield</mat-icon>
+                }
+              </div>
+            </mat-list-option>
+            }
+          </mat-selection-list>
+          }
+        </mat-card-content>
+        <mat-card-actions align="end">
+          <button
+            mat-flat-button
+            [disabled]="!canStartAnalysis()"
+            (click)="onStartAnalysis()"
+          >
+            <mat-icon>play_arrow</mat-icon>
+            解析開始
+          </button>
+        </mat-card-actions>
+      </mat-card>
+    </div>
+    }
+  </div>
+  }
+</div>
