@@ -57,7 +57,7 @@ describe("JobManager", () => {
 
     it("stores the job with correct initial state", () => {
       const id = manager.createJob("user1");
-      const job = manager.getJob(id);
+      const job = manager.getJob(id!);
 
       expect(job).toBeDefined();
       expect(job!.userId).toBe("user1");
@@ -73,6 +73,48 @@ describe("JobManager", () => {
       expect(manager.size).toBe(1);
       manager.createJob("user2");
       expect(manager.size).toBe(2);
+    });
+
+    it("returns null when per-user active job limit is exceeded", () => {
+      // Create a manager with a low limit
+      const limitedManager = new JobManager(5000, 2);
+
+      const id1 = limitedManager.createJob("user1");
+      const id2 = limitedManager.createJob("user1");
+      const id3 = limitedManager.createJob("user1");
+
+      expect(id1).toBeTruthy();
+      expect(id2).toBeTruthy();
+      expect(id3).toBeNull();
+
+      // Other users are not affected
+      const id4 = limitedManager.createJob("user2");
+      expect(id4).toBeTruthy();
+
+      limitedManager.clear();
+    });
+
+    it("allows new jobs after existing ones complete", () => {
+      const limitedManager = new JobManager(5000, 1);
+
+      const id1 = limitedManager.createJob("user1");
+      expect(id1).toBeTruthy();
+
+      // Limit reached
+      expect(limitedManager.createJob("user1")).toBeNull();
+
+      // Complete the first job
+      limitedManager.sendComplete(id1!, {
+        framework: "test",
+        screens: [],
+        transitions: [],
+      });
+
+      // Now we can create another
+      const id2 = limitedManager.createJob("user1");
+      expect(id2).toBeTruthy();
+
+      limitedManager.clear();
     });
   });
 

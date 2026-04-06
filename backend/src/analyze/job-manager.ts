@@ -39,6 +39,9 @@ export interface AnalysisJob {
 /** Default auto-cleanup timeout: 30 minutes. */
 const DEFAULT_CLEANUP_TIMEOUT_MS = 30 * 60 * 1000;
 
+/** Default maximum active (pending | running) jobs per user. */
+const DEFAULT_MAX_JOBS_PER_USER = 5;
+
 export class JobManager {
   private readonly jobs = new Map<string, AnalysisJob>();
   private readonly cleanupTimers = new Map<
@@ -46,16 +49,26 @@ export class JobManager {
     ReturnType<typeof setTimeout>
   >();
   private readonly cleanupTimeoutMs: number;
+  private readonly maxJobsPerUser: number;
 
-  constructor(cleanupTimeoutMs: number = DEFAULT_CLEANUP_TIMEOUT_MS) {
+  constructor(
+    cleanupTimeoutMs: number = DEFAULT_CLEANUP_TIMEOUT_MS,
+    maxJobsPerUser: number = DEFAULT_MAX_JOBS_PER_USER,
+  ) {
     this.cleanupTimeoutMs = cleanupTimeoutMs;
+    this.maxJobsPerUser = maxJobsPerUser;
   }
 
   /**
    * Create a new analysis job for a user.
-   * Returns the job ID.
+   * Returns the job ID, or `null` if the user has reached the active job limit.
    */
-  createJob(userId: string): string {
+  createJob(userId: string): string | null {
+    const activeCount = this.countActiveJobsForUser(userId);
+    if (activeCount >= this.maxJobsPerUser) {
+      return null;
+    }
+
     const id = randomUUID();
     const job: AnalysisJob = {
       id,
@@ -69,6 +82,22 @@ export class JobManager {
     this.jobs.set(id, job);
     this.scheduleCleanup(id);
     return id;
+  }
+
+  /**
+   * Count active (pending or running) jobs for a given user.
+   */
+  countActiveJobsForUser(userId: string): number {
+    let count = 0;
+    for (const job of this.jobs.values()) {
+      if (
+        job.userId === userId &&
+        (job.status === "pending" || job.status === "running")
+      ) {
+        count++;
+      }
+    }
+    return count;
   }
 
   /**

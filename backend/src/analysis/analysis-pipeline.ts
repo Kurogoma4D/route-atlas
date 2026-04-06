@@ -45,6 +45,19 @@ export function isSupportedModel(value: string): value is SupportedModel {
 // Pipeline input
 // ---------------------------------------------------------------------------
 
+/**
+ * Progress stages reported between pipeline turns.
+ *
+ * - `"analyzing_variants"` — emitted after Turn 1 completes, before Turn 2.
+ * - `"analyzing_transitions"` — emitted after Turn 2 completes, before Turn 3.
+ */
+export type PipelineStage = "analyzing_variants" | "analyzing_transitions";
+
+/**
+ * Callback invoked between pipeline turns to report progress.
+ */
+export type OnPipelineProgress = (stage: PipelineStage) => void;
+
 export interface AnalysisPipelineInput {
   /** Detected framework name (e.g. "nextjs-app", "react-router"). */
   framework: string;
@@ -60,6 +73,9 @@ export interface AnalysisPipelineInput {
 
   /** Which LLM model to use. Defaults to gpt-4.1. */
   model?: SupportedModel;
+
+  /** Optional callback invoked between pipeline turns to report real progress. */
+  onProgress?: OnPipelineProgress;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +164,9 @@ export class AnalysisPipeline {
       isArray,
     );
 
+    // Report progress: Turn 1 done, starting Turn 2
+    input.onProgress?.("analyzing_variants");
+
     // ------------------------------------------------------------------
     // Turn 2 — extract variants for each screen (parallelised in batches)
     //
@@ -206,6 +225,9 @@ export class AnalysisPipeline {
       );
       screensWithVariants.push(...batchResults);
     }
+
+    // Report progress: Turn 2 done, starting Turn 3
+    input.onProgress?.("analyzing_transitions");
 
     // ------------------------------------------------------------------
     // Turn 3 — extract transitions

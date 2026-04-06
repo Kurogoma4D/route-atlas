@@ -209,6 +209,20 @@ describe("AnalysisPipeline", () => {
     });
   });
 
+  it("calls onProgress callback between turns", async () => {
+    const stages: string[] = [];
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      onProgress: (stage) => {
+        stages.push(stage);
+      },
+    });
+
+    expect(stages).toEqual(["analyzing_variants", "analyzing_transitions"]);
+  });
+
   it("uses the default model when none specified", async () => {
     await pipeline.run({
       framework: "angular",

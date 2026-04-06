@@ -5,6 +5,8 @@ import { createAuthRouter, requireAuth } from "./auth/routes.js";
 import { createReposRouter } from "./repos/routes.js";
 import { createAnalyzeRouter } from "./analyze/routes.js";
 import type { AnalyzeRouterDeps } from "./analyze/routes.js";
+import { CopilotClientManager } from "./analysis/copilot-client.js";
+import { JobManager } from "./analyze/job-manager.js";
 // Session type augmentation loaded via auth/session.d.ts
 
 export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
@@ -57,9 +59,20 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
   app.use("/api/repos", requireAuth, createReposRouter());
 
   // Protected: Analysis routes (SSE progress)
-  if (analyzeDeps) {
-    app.use("/api/analyze", requireAuth, createAnalyzeRouter(analyzeDeps));
-  }
+  // Create default deps when not provided so the default exported app
+  // always registers analyze routes.
+  const resolvedAnalyzeDeps: AnalyzeRouterDeps = analyzeDeps ?? {
+    clientManager: new CopilotClientManager((_token) => ({
+      chatCompletion: async () => ({ content: "[]" }),
+      dispose: () => {},
+    })),
+    jobManager: new JobManager(),
+  };
+  app.use(
+    "/api/analyze",
+    requireAuth,
+    createAnalyzeRouter(resolvedAnalyzeDeps),
+  );
 
   return app;
 }

@@ -72,6 +72,14 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
     const userId = req.session.user!.login;
     const jobId = jobManager.createJob(userId);
 
+    if (jobId === null) {
+      res.status(429).json({
+        error: "too_many_jobs",
+        message: "Too many active analysis jobs. Please wait for existing jobs to complete.",
+      });
+      return;
+    }
+
     // Return jobId immediately
     res.status(202).json({ jobId });
 
@@ -86,8 +94,11 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
       encryptedToken: req.session.encryptedToken!,
       jobManager,
       clientManager: deps.clientManager,
-    }).catch(() => {
-      // Error already sent via SSE in runPipeline
+    }).catch((err) => {
+      console.error(
+        `[analyze] Unhandled pipeline error for job ${jobId}:`,
+        err,
+      );
     });
   });
 
@@ -207,7 +218,22 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         ref: branch,
       },
     );
-    const packageJson: PackageJson = JSON.parse(pkgContents[0]!.content);
+
+    if (!pkgContents[0]) {
+      jobManager.sendError(jobId, "Failed to fetch package.json contents");
+      return;
+    }
+
+    let packageJson: PackageJson;
+    try {
+      packageJson = JSON.parse(pkgContents[0].content) as PackageJson;
+    } catch {
+      jobManager.sendError(
+        jobId,
+        "package.json contains invalid JSON and could not be parsed",
+      );
+      return;
+    }
 
     const { framework, routingFilePatterns } = detectFramework(
       packageJson,
@@ -230,6 +256,16 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     );
 
     // Fetch component files (all .ts/.tsx/.js/.jsx/.vue/.svelte files)
+    // excluding common non-source directories
+    const EXCLUDED_DIR_PREFIXES = [
+      "node_modules/",
+      "dist/",
+      "build/",
+      ".next/",
+      "out/",
+      ".nuxt/",
+      ".svelte-kit/",
+    ];
     const componentPatterns = [
       "**/*.tsx",
       "**/*.jsx",
@@ -238,7 +274,12 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       "**/*.vue",
       "**/*.svelte",
     ];
-    const componentEntries = filterFilesByPatterns(allFiles, componentPatterns);
+    const componentEntries = filterFilesByPatterns(
+      allFiles,
+      componentPatterns,
+    ).filter(
+      (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+    );
     const componentFiles = await fetchFileContents(
       owner,
       repo,
@@ -256,30 +297,24 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const adapter = clientManager.getClient(userId, token);
     const pipeline = new AnalysisPipeline(adapter);
 
-    // We run the pipeline as a whole since it manages Turn 1/2/3 internally.
-    // However, we send progress events between conceptual steps.
-
-    // Step 4 & 5 progress events will be sent after pipeline completes Turn 1
-    // Since AnalysisPipeline.run() handles all three turns, we call it directly
-    // and send the intermediate progress events around it.
-
-    // For a more granular approach, we would need to refactor AnalysisPipeline
-    // to emit events. For now, we send all step events and then run the pipeline.
-    jobManager.sendProgress(jobId, {
-      step: "analyzing_variants",
-      message: "バリエーションを解析中...",
-    });
-
-    jobManager.sendProgress(jobId, {
-      step: "analyzing_transitions",
-      message: "画面遷移を解析中...",
-    });
-
     const result = await pipeline.run({
       framework,
       routingFiles,
       componentFiles,
       model,
+      onProgress: (stage) => {
+        if (stage === "analyzing_variants") {
+          jobManager.sendProgress(jobId, {
+            step: "analyzing_variants",
+            message: "バリエーションを解析中...",
+          });
+        } else if (stage === "analyzing_transitions") {
+          jobManager.sendProgress(jobId, {
+            step: "analyzing_transitions",
+            message: "画面遷移を解析中...",
+          });
+        }
+      },
     });
 
     // Send complete event
