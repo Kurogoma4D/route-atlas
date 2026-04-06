@@ -1,4 +1,5 @@
-import { Component, inject, OnInit } from "@angular/core";
+import { Component, DestroyRef, inject, OnInit } from "@angular/core";
+import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
 import { Router, RouterOutlet } from "@angular/router";
 import { MatToolbarModule } from "@angular/material/toolbar";
 import { MatButtonModule } from "@angular/material/button";
@@ -21,14 +22,22 @@ import { AuthService } from "./auth/auth.service";
 export class App implements OnInit {
   authService = inject(AuthService);
   private router = inject(Router);
+  private destroyRef = inject(DestroyRef);
 
   ngOnInit() {
-    this.authService.checkAuth().subscribe();
+    this.authService
+      .checkAuth()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe();
   }
 
   onLogout() {
-    this.authService.logout().subscribe(() => {
-      this.router.navigate(["/login"]);
-    });
+    this.authService
+      .logout()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: () => this.router.navigate(["/login"]),
+        error: () => this.router.navigate(["/login"]),
+      });
   }
 }

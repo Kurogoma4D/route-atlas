@@ -8,9 +8,18 @@ import {
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 
+function getSessionSecret(): string {
+  const secret = process.env["SESSION_SECRET"];
+  if (!secret && process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "SESSION_SECRET environment variable must be set in production",
+    );
+  }
+  return secret ?? "default-dev-secret-key";
+}
+
 function getEncryptionKey(): Buffer {
-  const secret = process.env["SESSION_SECRET"] ?? "default-dev-secret-key";
-  return createHash("sha256").update(secret).digest();
+  return createHash("sha256").update(getSessionSecret()).digest();
 }
 
 export function encrypt(plaintext: string): string {

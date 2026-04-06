@@ -23,15 +23,17 @@ describe("Auth routes", () => {
   });
 
   describe("GET /api/auth/github", () => {
-    it("should redirect to GitHub OAuth authorize URL", async () => {
+    it("should redirect to GitHub OAuth authorize URL with state and updated scope", async () => {
       const res = await request(app).get("/api/auth/github");
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toContain(
+      const location = res.headers["location"] as string;
+      expect(location).toContain(
         "https://github.com/login/oauth/authorize",
       );
-      expect(res.headers["location"]).toContain("client_id=test-client-id");
-      expect(res.headers["location"]).toContain("scope=repo");
+      expect(location).toContain("client_id=test-client-id");
+      expect(location).toContain("scope=repo+read%3Auser");
+      expect(location).toMatch(/state=[a-f0-9]{32}/);
     });
 
     it("should return 500 if GITHUB_CLIENT_ID is not set", async () => {
@@ -46,6 +48,14 @@ describe("Auth routes", () => {
   });
 
   describe("GET /api/auth/callback", () => {
+    /** Helper: initiate OAuth flow via GET /github to obtain a session with state */
+    async function initiateOAuthFlow(agent: ReturnType<typeof request.agent>) {
+      const ghRes = await agent.get("/api/auth/github");
+      const location = ghRes.headers["location"] as string;
+      const url = new URL(location);
+      return url.searchParams.get("state")!;
+    }
+
     it("should redirect to /login?error=missing_code when no code", async () => {
       const res = await request(app).get("/api/auth/callback");
 
@@ -62,7 +72,31 @@ describe("Auth routes", () => {
       expect(res.headers["location"]).toBe("/login?error=oauth_denied");
     });
 
+    it("should redirect to /login?error=state_mismatch when state is missing", async () => {
+      const res = await request(app).get(
+        "/api/auth/callback?code=test_code_123",
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers["location"]).toBe("/login?error=state_mismatch");
+    });
+
+    it("should redirect to /login?error=state_mismatch when state does not match", async () => {
+      const agent = request.agent(app);
+      await initiateOAuthFlow(agent);
+
+      const res = await agent.get(
+        "/api/auth/callback?code=test_code_123&state=wrong_state",
+      );
+
+      expect(res.status).toBe(302);
+      expect(res.headers["location"]).toBe("/login?error=state_mismatch");
+    });
+
     it("should exchange code for token and redirect to / on success", async () => {
+      const agent = request.agent(app);
+      const state = await initiateOAuthFlow(agent);
+
       // Mock token exchange
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -85,8 +119,8 @@ describe("Auth routes", () => {
         json: async () => ({}),
       });
 
-      const res = await request(app).get(
-        "/api/auth/callback?code=test_code_123",
+      const res = await agent.get(
+        `/api/auth/callback?code=test_code_123&state=${state}`,
       );
 
       expect(res.status).toBe(302);
@@ -107,6 +141,9 @@ describe("Auth routes", () => {
     });
 
     it("should redirect to /login on token exchange failure", async () => {
+      const agent = request.agent(app);
+      const state = await initiateOAuthFlow(agent);
+
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -115,7 +152,9 @@ describe("Auth routes", () => {
         }),
       });
 
-      const res = await request(app).get("/api/auth/callback?code=bad_code");
+      const res = await agent.get(
+        `/api/auth/callback?code=bad_code&state=${state}`,
+      );
 
       expect(res.status).toBe(302);
       expect(res.headers["location"]).toBe(
@@ -133,7 +172,14 @@ describe("Auth routes", () => {
     });
 
     it("should return user info when authenticated", async () => {
-      // First, authenticate via callback
+      const agent = request.agent(app);
+
+      // Initiate OAuth flow to get state
+      const ghRes = await agent.get("/api/auth/github");
+      const location = ghRes.headers["location"] as string;
+      const state = new URL(location).searchParams.get("state")!;
+
+      // Mock token exchange, user info, and Copilot check
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({ access_token: "gho_test_token" }),
@@ -148,8 +194,7 @@ describe("Auth routes", () => {
       });
       mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
 
-      const agent = request.agent(app);
-      await agent.get("/api/auth/callback?code=valid_code");
+      await agent.get(`/api/auth/callback?code=valid_code&state=${state}`);
 
       const res = await agent.get("/api/auth/me");
       expect(res.status).toBe(200);
@@ -165,6 +210,13 @@ describe("Auth routes", () => {
 
   describe("POST /api/auth/logout", () => {
     it("should destroy session and return success", async () => {
+      const agent = request.agent(app);
+
+      // Initiate OAuth flow to get state
+      const ghRes = await agent.get("/api/auth/github");
+      const location = ghRes.headers["location"] as string;
+      const state = new URL(location).searchParams.get("state")!;
+
       // Authenticate first
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -180,8 +232,7 @@ describe("Auth routes", () => {
       });
       mockFetch.mockResolvedValueOnce({ ok: false });
 
-      const agent = request.agent(app);
-      await agent.get("/api/auth/callback?code=valid_code");
+      await agent.get(`/api/auth/callback?code=valid_code&state=${state}`);
 
       // Verify authenticated
       let res = await agent.get("/api/auth/me");

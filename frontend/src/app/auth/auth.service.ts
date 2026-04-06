@@ -54,9 +54,8 @@ export class AuthService {
           this._user.set(null);
           this._error.set(null);
         }),
-        catchError((err) => {
+        catchError(() => {
           this._error.set("Failed to logout");
-          console.error("Logout error:", err);
           return of(null);
         }),
       );

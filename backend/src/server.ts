@@ -19,9 +19,16 @@ export function createApp() {
   );
   app.use(express.json());
 
+  const sessionSecret = process.env["SESSION_SECRET"];
+  if (!sessionSecret && process.env["NODE_ENV"] === "production") {
+    throw new Error(
+      "SESSION_SECRET environment variable must be set in production",
+    );
+  }
+
   app.use(
     session({
-      secret: process.env["SESSION_SECRET"] ?? "default-dev-secret-key",
+      secret: sessionSecret ?? "default-dev-secret-key",
       resave: false,
       saveUninitialized: false,
       cookie: {

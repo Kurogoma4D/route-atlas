@@ -1,5 +1,6 @@
 import { Router } from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
+import { randomBytes } from "node:crypto";
 import { encrypt, decrypt } from "./crypto.js";
 import type { UserInfo, AuthError } from "@route-atlas/shared";
 
@@ -99,16 +100,24 @@ export function createAuthRouter(): Router {
   const router = Router();
 
   // GET /api/auth/github - Redirect to GitHub OAuth authorize URL
-  router.get("/github", (_req: Request, res: Response) => {
+  router.get("/github", (req: Request, res: Response) => {
     try {
       const clientId = getClientId();
       const callbackUrl =
         process.env["OAUTH_CALLBACK_URL"] ??
         "http://localhost:3000/api/auth/callback";
+
+      // Generate CSRF state token
+      const state = randomBytes(16).toString("hex");
+      req.session.oauthState = state;
+
       const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: callbackUrl,
-        scope: "repo",
+        // repo: needed for reading private repository contents (SPEC.md §4.1)
+        // read:user: needed for reading user profile information
+        scope: "repo read:user",
+        state,
       });
       res.redirect(`${GITHUB_OAUTH_AUTHORIZE_URL}?${params.toString()}`);
     } catch (err) {
@@ -126,6 +135,7 @@ export function createAuthRouter(): Router {
   router.get("/callback", async (req: Request, res: Response) => {
     const code = req.query["code"] as string | undefined;
     const error = req.query["error"] as string | undefined;
+    const state = req.query["state"] as string | undefined;
 
     if (error) {
       res.redirect("/login?error=oauth_denied");
@@ -134,6 +144,14 @@ export function createAuthRouter(): Router {
 
     if (!code) {
       res.redirect("/login?error=missing_code");
+      return;
+    }
+
+    // Verify CSRF state parameter
+    const expectedState = req.session.oauthState;
+    delete req.session.oauthState;
+    if (!state || state !== expectedState) {
+      res.redirect("/login?error=state_mismatch");
       return;
     }
 
@@ -154,14 +172,12 @@ export function createAuthRouter(): Router {
 
       req.session.save((err) => {
         if (err) {
-          console.error("Session save error:", err);
           res.redirect("/login?error=session_error");
           return;
         }
         res.redirect("/");
       });
-    } catch (err) {
-      console.error("OAuth callback error:", err);
+    } catch {
       res.redirect("/login?error=token_exchange_failed");
     }
   });
@@ -188,7 +204,6 @@ export function createAuthRouter(): Router {
   router.post("/logout", (req: Request, res: Response) => {
     req.session.destroy((err) => {
       if (err) {
-        console.error("Session destroy error:", err);
         const errorResponse: AuthError = {
           error: "logout_failed",
           message: "Failed to destroy session",
@@ -208,7 +223,7 @@ export function createAuthRouter(): Router {
  * Middleware to require authentication.
  * Returns the decrypted access token for downstream handlers.
  */
-export function requireAuth(req: Request, res: Response, next: () => void) {
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.session.user || !req.session.encryptedToken) {
     const errorResponse: AuthError = {
       error: "unauthorized",

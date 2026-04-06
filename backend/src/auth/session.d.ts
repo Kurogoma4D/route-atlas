@@ -5,5 +5,6 @@ declare module "express-session" {
     encryptedToken: string;
     user: UserInfo;
     hasCopilot: boolean;
+    oauthState?: string;
   }
 }
