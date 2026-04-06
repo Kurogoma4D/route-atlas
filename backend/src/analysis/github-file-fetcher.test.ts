@@ -138,13 +138,14 @@ describe("github-file-fetcher", () => {
       expect(fetch).toHaveBeenCalledTimes(2);
     });
 
-    it("retries on 403 with x-ratelimit-reset header", async () => {
+    it("retries on 403 with x-ratelimit-remaining 0", async () => {
       const noopSleep = vi.fn().mockResolvedValue(undefined);
       const futureEpoch = Math.floor(Date.now() / 1000) + 5;
 
       vi.mocked(fetch)
         .mockResolvedValueOnce(
           mockFetchResponse({ message: "rate limit" }, 403, {
+            "x-ratelimit-remaining": "0",
             "x-ratelimit-reset": String(futureEpoch),
           }),
         )
@@ -199,6 +200,20 @@ describe("github-file-fetcher", () => {
 
       // 3 attempts total (initial + 2 retries)
       expect(fetch).toHaveBeenCalledTimes(3);
+    });
+
+    it("throws GitHubApiError on 403 that is not a rate limit (x-ratelimit-remaining != 0)", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        mockFetchResponse({ message: "too large" }, 403, {
+          "x-ratelimit-remaining": "42",
+        }),
+      );
+
+      await expect(
+        githubFetch("https://api.github.com/test", TOKEN),
+      ).rejects.toThrow(GitHubApiError);
+
+      expect(fetch).toHaveBeenCalledTimes(1);
     });
 
     it("throws GitHubApiError on non-rate-limit errors without retrying", async () => {
@@ -414,9 +429,11 @@ describe("github-file-fetcher", () => {
     it("falls back to Blob API when Contents API returns 403", async () => {
       const fileContent = "fallback content";
 
-      // Contents API returns 403
+      // Contents API returns 403 (not a rate limit — x-ratelimit-remaining is not "0")
       vi.mocked(fetch).mockResolvedValueOnce(
-        mockFetchResponse({ message: "too large" }, 403),
+        mockFetchResponse({ message: "too large" }, 403, {
+          "x-ratelimit-remaining": "42",
+        }),
       );
       // Blob API succeeds
       vi.mocked(fetch).mockResolvedValueOnce(
@@ -455,7 +472,7 @@ describe("github-file-fetcher", () => {
 
       expect(fetch).toHaveBeenCalledWith(
         "https://api.github.com/repos/owner/repo/contents/src/index.ts?ref=develop",
-        expect.any(Object),
+        expect.any(Object),  // encodeURIComponent is no-op for simple paths
       );
     });
   });

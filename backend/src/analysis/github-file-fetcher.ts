@@ -124,7 +124,8 @@ export async function githubFetch<T>(
     }
 
     // Rate limit handling
-    if (response.status === 403 || response.status === 429) {
+    if (response.status === 429 ||
+        (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0")) {
       const retryAfterHeader = response.headers.get("retry-after");
       const rateLimitResetHeader = response.headers.get("x-ratelimit-reset");
 
@@ -176,7 +177,7 @@ export async function fetchFileTree(
   branch: string,
   token: string,
 ): Promise<{ files: TreeEntry[]; truncated: boolean }> {
-  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`;
+  const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
   const data = await githubFetch<TreeResponse>(url, token);
 
   const files = data.tree.filter((entry) => entry.type === "blob");
@@ -224,8 +225,9 @@ export async function fetchSingleFileContent(
   }
 
   // Use Contents API
+  const encodedPath = file.path.split('/').map(encodeURIComponent).join('/');
   const refParam = ref ? `?ref=${encodeURIComponent(ref)}` : "";
-  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/contents/${file.path}${refParam}`;
+  const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}${refParam}`;
 
   try {
     const data = await githubFetch<ContentsResponse>(url, token);
@@ -243,8 +245,7 @@ export async function fetchSingleFileContent(
  * Fetch file contents for multiple files.
  *
  * Files exceeding the Contents API size limit are automatically fetched
- * via the Blob API. When the tree was truncated, callers should pass
- * `useBlobApi: true` to force Blob API usage for all files.
+ * via the Blob API.
  */
 export async function fetchFileContents(
   owner: string,
@@ -281,7 +282,7 @@ export async function fetchViaBlobApi(
   sha: string,
   token: string,
 ): Promise<string> {
-  const url = `${GITHUB_API_BASE}/repos/${owner}/${repo}/git/blobs/${sha}`;
+  const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/git/blobs/${encodeURIComponent(sha)}`;
   const data = await githubFetch<BlobResponse>(url, token);
 
   if (data.encoding === "base64") {
