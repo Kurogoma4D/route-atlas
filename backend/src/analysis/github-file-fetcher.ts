@@ -207,7 +207,7 @@ export function filterFilesByPatterns(
  * For files within the 1 MB Contents API limit, uses
  * `GET /repos/{owner}/{repo}/contents/{path}`.
  *
- * For files exceeding 1 MB (or when `useBlobApi` is true), uses
+ * For files exceeding 1 MB, or when the Contents API returns 403, falls back to
  * `GET /repos/{owner}/{repo}/git/blobs/{sha}`.
  */
 export async function fetchSingleFileContent(
