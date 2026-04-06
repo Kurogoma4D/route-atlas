@@ -305,41 +305,43 @@ describe("Analysis API routes", () => {
       const agent = request.agent(app);
       await authenticateAgent(agent);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      // Create a job directly via jobManager so we control its state
+      const jobId = jobManager.createJob("testuser");
+      expect(jobId).not.toBeNull();
 
-      // Job is likely still running or pending
-      // Force the job to pending state by checking immediately
-      const job = jobManager.getJob(jobId);
-      if (job && job.status !== "complete") {
-        const res = await agent.get(`/api/analyze/${jobId}/result`);
-        expect(res.status).toBe(409);
-        expect(res.body).toHaveProperty("error", "not_ready");
-      }
+      // Job starts in "pending" state — verify precondition
+      const job = jobManager.getJob(jobId!);
+      expect(job).toBeDefined();
+      expect(job!.status).toBe("pending");
+
+      const res = await agent.get(`/api/analyze/${jobId}/result`);
+      expect(res.status).toBe(409);
+      expect(res.body).toHaveProperty("error", "not_ready");
     });
 
     it("returns analysis result when job is complete", async () => {
       const agent = request.agent(app);
       await authenticateAgent(agent);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      // Create a job directly and mark it complete with a known result
+      const jobId = jobManager.createJob("testuser");
+      expect(jobId).not.toBeNull();
+      jobManager.sendComplete(jobId!, {
+        framework: "nextjs-app",
+        screens: [],
+        transitions: [],
+      });
 
-      // Wait for the pipeline to complete
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Verify precondition
+      const job = jobManager.getJob(jobId!);
+      expect(job).toBeDefined();
+      expect(job!.status).toBe("complete");
 
-      const job = jobManager.getJob(jobId);
-      if (job?.status === "complete") {
-        const res = await agent.get(`/api/analyze/${jobId}/result`);
-        expect(res.status).toBe(200);
-        expect(res.body).toHaveProperty("framework");
-        expect(res.body).toHaveProperty("screens");
-        expect(res.body).toHaveProperty("transitions");
-      }
+      const res = await agent.get(`/api/analyze/${jobId}/result`);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("framework");
+      expect(res.body).toHaveProperty("screens");
+      expect(res.body).toHaveProperty("transitions");
     });
   });
 

@@ -174,10 +174,10 @@ describe("graph-converter", () => {
       expect(conditionalEdge!.data["condition"]).toBe("User is admin");
     });
 
-    it("should set null condition for non-conditional edges", () => {
+    it("should omit condition key for non-conditional edges", () => {
       const elements = convertToCytoscapeElements(sampleResult);
       const linkEdge = elements.find((e) => e.data["id"] === "t1");
-      expect(linkEdge!.data["condition"]).toBeNull();
+      expect(linkEdge!.data["condition"]).toBeUndefined();
     });
 
     it("should create parent group nodes for nested routes", () => {

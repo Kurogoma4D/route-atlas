@@ -13,12 +13,14 @@ import {
   Component,
   OnInit,
   OnDestroy,
+  DestroyRef,
   inject,
   signal,
   ElementRef,
   viewChild,
   AfterViewInit,
 } from "@angular/core";
+import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
 import { ActivatedRoute, Router } from "@angular/router";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
@@ -33,7 +35,11 @@ import type { SelectedNodeData } from "./detail-panel";
 import { convertToCytoscapeElements } from "./graph-converter";
 
 // Register the dagre layout extension once
-cytoscape.use(dagre);
+try {
+  cytoscape.use(dagre);
+} catch {
+  // Already registered — ignore double-registration error
+}
 
 @Component({
   selector: "app-graph",
@@ -51,9 +57,10 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
   private graphService = inject(GraphService);
+  private destroyRef = inject(DestroyRef);
 
   readonly cyContainer =
-    viewChild.required<ElementRef<HTMLDivElement>>("cyContainer");
+    viewChild<ElementRef<HTMLDivElement>>("cyContainer");
 
   readonly loading = signal(true);
   readonly errorMessage = signal<string | null>(null);
@@ -99,33 +106,44 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private loadGraph(jobId: string): void {
-    this.graphService.fetchResult(jobId).subscribe({
-      next: (result) => {
-        this.analysisResult = result;
-        this.loading.set(false);
-        // Schedule Cytoscape init on next microtask so the container is rendered
-        queueMicrotask(() => this.initCytoscape(result));
-      },
-      error: (err) => {
-        const message =
-          err?.error?.message ??
-          err?.message ??
-          "Failed to load analysis result.";
-        this.errorMessage.set(message);
-        this.loading.set(false);
-      },
-    });
+    this.graphService
+      .fetchResult(jobId)
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (result) => {
+          this.analysisResult = result;
+          this.loading.set(false);
+          // Schedule Cytoscape init on next microtask so the container is rendered
+          queueMicrotask(() => this.initCytoscape(result));
+        },
+        error: (err) => {
+          const message =
+            err?.error?.message ??
+            err?.message ??
+            "Failed to load analysis result.";
+          this.errorMessage.set(message);
+          this.loading.set(false);
+        },
+      });
   }
 
   private initCytoscape(result: AnalysisResult): void {
-    const container = this.cyContainer().nativeElement;
+    const containerRef = this.cyContainer();
+    if (!containerRef) {
+      return;
+    }
+    const container = containerRef.nativeElement;
     const elements = convertToCytoscapeElements(result);
 
     // In test environments without canvas support, use headless renderer
+    const testCanvas =
+      typeof document !== "undefined"
+        ? document.createElement("canvas")
+        : null;
     const hasCanvas =
-      typeof document !== "undefined" &&
-      typeof document.createElement("canvas").getContext === "function" &&
-      document.createElement("canvas").getContext("2d") !== null;
+      testCanvas !== null &&
+      typeof testCanvas.getContext === "function" &&
+      testCanvas.getContext("2d") !== null;
 
     // Cytoscape style definitions — cast as cytoscape.StylesheetStyle[] to work
     // around @types/cytoscape being overly strict with padding string values.

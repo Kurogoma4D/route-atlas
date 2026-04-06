@@ -30,21 +30,22 @@ export type TransitionMethod = "link" | "programmatic" | "redirect";
 export function classifyMethod(method: string): TransitionMethod {
   const lower = method.toLowerCase();
 
-  // Link-style navigation (check first to handle "routerLink")
-  if (
-    lower.includes("link") ||
-    lower.includes("<a") ||
-    lower.includes("href")
-  ) {
-    return "link";
-  }
-
+  // Redirect-style navigation (check before "link" so "redirect" isn't misclassified)
   if (
     lower.includes("redirect") ||
     lower.includes("window.location") ||
     lower === "redirect"
   ) {
     return "redirect";
+  }
+
+  // Link-style navigation (handles "routerLink", <a>, href, etc.)
+  if (
+    lower.includes("link") ||
+    lower.includes("<a") ||
+    lower.includes("href")
+  ) {
+    return "link";
   }
 
   if (
@@ -168,8 +169,13 @@ export function convertToCytoscapeElements(
       target: transition.to,
       label: transition.trigger,
       method,
-      condition: transition.condition ?? null,
     };
+
+    // Only include condition key when present, so Cytoscape's
+    // `edge[condition]` selector doesn't match unconditional edges.
+    if (transition.condition != null) {
+      edgeData["condition"] = transition.condition;
+    }
 
     elements.push({ data: edgeData });
   }
