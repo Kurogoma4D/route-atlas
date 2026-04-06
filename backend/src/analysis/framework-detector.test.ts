@@ -34,6 +34,19 @@ describe("detectFramework", () => {
       expect(result.routingFilePatterns).toContain("app/**/layout.*");
     });
 
+    it("detects Next.js App Router when src/app/ directory exists", () => {
+      const result = detectFramework(pkg({ next: "14.0.0", react: "18.0.0" }), [
+        "src/app/page.tsx",
+        "src/app/layout.tsx",
+        "package.json",
+      ]);
+      expect(result.framework).toBe("nextjs-app");
+      expect(result.routingFilePatterns).toContain(
+        "src/app/**/page.{tsx,jsx,ts,js}",
+      );
+      expect(result.routingFilePatterns).toContain("src/app/**/layout.*");
+    });
+
     it("defaults to App Router when neither app/ nor pages/ exist", () => {
       const result = detectFramework(pkg({ next: "14.0.0" }), [
         "src/index.tsx",
@@ -52,6 +65,18 @@ describe("detectFramework", () => {
       expect(result.framework).toBe("nextjs-pages");
       expect(result.routingFilePatterns).toContain(
         "pages/**/*.{tsx,jsx,ts,js}",
+      );
+    });
+
+    it("detects Pages Router when src/pages/ directory exists", () => {
+      const result = detectFramework(pkg({ next: "12.0.0", react: "18.0.0" }), [
+        "src/pages/index.tsx",
+        "src/pages/about.tsx",
+        "package.json",
+      ]);
+      expect(result.framework).toBe("nextjs-pages");
+      expect(result.routingFilePatterns).toContain(
+        "src/pages/**/*.{tsx,jsx,ts,js}",
       );
     });
 
@@ -79,7 +104,7 @@ describe("detectFramework", () => {
       );
       expect(result.framework).toBe("angular");
       expect(result.routingFilePatterns).toContain("**/*-routing.module.ts");
-      expect(result.routingFilePatterns).toContain("app.routes.ts");
+      expect(result.routingFilePatterns).toContain("**/app.routes.ts");
     });
   });
 

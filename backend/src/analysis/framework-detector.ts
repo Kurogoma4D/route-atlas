@@ -72,7 +72,7 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     key: "@angular/core",
     resolve: () => ({
       framework: "angular",
-      routingFilePatterns: ["**/*-routing.module.ts", "app.routes.ts"],
+      routingFilePatterns: ["**/*-routing.module.ts", "**/app.routes.ts"],
     }),
   },
   {
@@ -115,29 +115,44 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
  * because it is the newer recommended approach.
  */
 function resolveNextJs(fileTree: string[]): FrameworkDetectionResult {
-  const hasAppDir = fileTree.some((f) => f === "app" || f.startsWith("app/"));
+  const hasAppDir = fileTree.some(
+    (f) => f === "app" || f.startsWith("app/") || f === "src/app" || f.startsWith("src/app/"),
+  );
   const hasPagesDir = fileTree.some(
-    (f) => f === "pages" || f.startsWith("pages/"),
+    (f) => f === "pages" || f.startsWith("pages/") || f === "src/pages" || f.startsWith("src/pages/"),
   );
 
   if (hasAppDir) {
     return {
       framework: "nextjs-app",
-      routingFilePatterns: ["app/**/page.{tsx,jsx,ts,js}", "app/**/layout.*"],
+      routingFilePatterns: [
+        "app/**/page.{tsx,jsx,ts,js}",
+        "app/**/layout.*",
+        "src/app/**/page.{tsx,jsx,ts,js}",
+        "src/app/**/layout.*",
+      ],
     };
   }
 
   if (hasPagesDir) {
     return {
       framework: "nextjs-pages",
-      routingFilePatterns: ["pages/**/*.{tsx,jsx,ts,js}"],
+      routingFilePatterns: [
+        "pages/**/*.{tsx,jsx,ts,js}",
+        "src/pages/**/*.{tsx,jsx,ts,js}",
+      ],
     };
   }
 
   // Default to App Router when directory structure is unknown
   return {
     framework: "nextjs-app",
-    routingFilePatterns: ["app/**/page.{tsx,jsx,ts,js}", "app/**/layout.*"],
+    routingFilePatterns: [
+      "app/**/page.{tsx,jsx,ts,js}",
+      "app/**/layout.*",
+      "src/app/**/page.{tsx,jsx,ts,js}",
+      "src/app/**/layout.*",
+    ],
   };
 }
 
