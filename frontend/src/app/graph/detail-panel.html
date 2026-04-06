@@ -1,0 +1,87 @@
+<div class="detail-panel">
+  <mat-card>
+    <mat-card-header>
+      <mat-card-title>{{ node().label }}</mat-card-title>
+      <mat-card-subtitle>{{ node().path }}</mat-card-subtitle>
+      <button mat-icon-button class="close-button" (click)="close()">
+        <mat-icon>close</mat-icon>
+      </button>
+    </mat-card-header>
+
+    <mat-card-content>
+      @if (node().description) {
+      <p class="description">{{ node().description }}</p>
+      }
+
+      <div class="section">
+        <div class="section-label">
+          <mat-icon>code</mat-icon>
+          <span>Component</span>
+        </div>
+        <code class="file-path">{{ node().componentFile }}</code>
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <div class="section">
+        <div class="section-label">
+          <mat-icon>view_carousel</mat-icon>
+          <span>Variants ({{ node().variants.length }})</span>
+        </div>
+        @if (node().variants.length === 0) {
+        <p class="empty-hint">No variants detected</p>
+        } @else {
+        <mat-list>
+          @for (variant of node().variants; track variant.id) {
+          <mat-list-item>
+            <mat-icon matListItemIcon
+              >{{ variantTypeIcon(variant.type) }}</mat-icon
+            >
+            <div matListItemTitle>
+              {{ variant.label }}
+              <mat-chip-set class="variant-chips">
+                <mat-chip>{{ variantTypeLabel(variant.type) }}</mat-chip>
+              </mat-chip-set>
+            </div>
+            <div matListItemLine class="variant-condition">
+              {{ variant.condition }}
+            </div>
+          </mat-list-item>
+          }
+        </mat-list>
+        }
+      </div>
+
+      <mat-divider></mat-divider>
+
+      <div class="section">
+        <div class="section-label">
+          <mat-icon>arrow_forward</mat-icon>
+          <span
+            >Outgoing transitions ({{ node().outgoingTransitions.length
+            }})</span
+          >
+        </div>
+        @if (node().outgoingTransitions.length === 0) {
+        <p class="empty-hint">No outgoing transitions</p>
+        } @else {
+        <mat-list>
+          @for (transition of node().outgoingTransitions; track transition.id) {
+          <mat-list-item>
+            <mat-icon matListItemIcon>arrow_right_alt</mat-icon>
+            <div matListItemTitle>{{ transition.trigger }}</div>
+            <div matListItemLine>
+              To: {{ transition.to }} @if (transition.condition) {
+              <span class="transition-condition">
+                ({{ transition.condition }})</span
+              >
+              }
+            </div>
+          </mat-list-item>
+          }
+        </mat-list>
+        }
+      </div>
+    </mat-card-content>
+  </mat-card>
+</div>

@@ -1,8 +1,9 @@
 /**
  * Analysis API Routes (SSE Progress)
  *
- * POST /api/analyze       — Start an analysis job, returns { jobId }
- * GET  /api/analyze/:jobId — SSE stream for progress events
+ * POST /api/analyze              — Start an analysis job, returns { jobId }
+ * GET  /api/analyze/:jobId        — SSE stream for progress events
+ * GET  /api/analyze/:jobId/result — Retrieve completed analysis result as JSON
  *
  * Reference: SPEC.md §6.1, §6.2, §6.3
  */
@@ -75,7 +76,8 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
     if (jobId === null) {
       res.status(429).json({
         error: "too_many_jobs",
-        message: "Too many active analysis jobs. Please wait for existing jobs to complete.",
+        message:
+          "Too many active analysis jobs. Please wait for existing jobs to complete.",
       });
       return;
     }
@@ -100,6 +102,40 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
         err,
       );
     });
+  });
+
+  // GET /api/analyze/:jobId/result — Retrieve completed analysis result
+  router.get("/:jobId/result", (req: Request, res: Response) => {
+    const jobId = req.params["jobId"] as string;
+    const job = jobManager.getJob(jobId);
+
+    if (!job) {
+      res.status(404).json({
+        error: "not_found",
+        message: "Job not found",
+      });
+      return;
+    }
+
+    // Verify ownership
+    const userId = req.session.user!.login;
+    if (job.userId !== userId) {
+      res.status(403).json({
+        error: "forbidden",
+        message: "Access denied",
+      });
+      return;
+    }
+
+    if (job.status !== "complete" || !job.result) {
+      res.status(409).json({
+        error: "not_ready",
+        message: `Job is not complete (status: ${job.status})`,
+      });
+      return;
+    }
+
+    res.json(job.result);
   });
 
   // GET /api/analyze/:jobId — SSE stream

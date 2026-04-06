@@ -1,0 +1,32 @@
+<div class="graph-container">
+  @if (loading()) {
+  <div class="loading-overlay">
+    <mat-spinner diameter="48"></mat-spinner>
+    <p>Loading graph...</p>
+  </div>
+  } @else if (errorMessage()) {
+  <div class="error-container">
+    <mat-icon class="error-icon" color="warn">error</mat-icon>
+    <p class="error-message">{{ errorMessage() }}</p>
+    <button mat-flat-button (click)="goBack()">
+      <mat-icon>arrow_back</mat-icon>
+      Back to repositories
+    </button>
+  </div>
+  } @else {
+  <div class="graph-toolbar">
+    <button mat-icon-button (click)="goBack()" aria-label="Back">
+      <mat-icon>arrow_back</mat-icon>
+    </button>
+    <button mat-icon-button (click)="fitGraph()" aria-label="Fit to screen">
+      <mat-icon>fit_screen</mat-icon>
+    </button>
+  </div>
+  <div class="graph-content">
+    <div #cyContainer class="cy-container"></div>
+    @if (selectedNode()) {
+    <app-detail-panel [node]="selectedNode()!" (closed)="closeDetailPanel()" />
+    }
+  </div>
+  }
+</div>

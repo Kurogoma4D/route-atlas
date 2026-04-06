@@ -271,6 +271,80 @@ describe("Analysis API routes", () => {
     });
   });
 
+  describe("GET /api/analyze/:jobId/result", () => {
+    it("returns 401 when not authenticated", async () => {
+      const res = await request(app).get("/api/analyze/some-job-id/result");
+      expect(res.status).toBe(401);
+    });
+
+    it("returns 404 for non-existent job", async () => {
+      const agent = request.agent(app);
+      await authenticateAgent(agent);
+
+      const res = await agent.get("/api/analyze/non-existent-id/result");
+      expect(res.status).toBe(404);
+    });
+
+    it("returns 403 when another user tries to access", async () => {
+      const agent1 = request.agent(app);
+      await authenticateAgent(agent1);
+
+      const postRes = await agent1
+        .post("/api/analyze")
+        .send({ owner: "foo", repo: "bar", branch: "main" });
+      const { jobId } = postRes.body;
+
+      const agent2 = request.agent(app);
+      await authenticateAgent2(agent2);
+
+      const res = await agent2.get(`/api/analyze/${jobId}/result`);
+      expect(res.status).toBe(403);
+    });
+
+    it("returns 409 when job is not complete", async () => {
+      const agent = request.agent(app);
+      await authenticateAgent(agent);
+
+      // Create a job directly via jobManager so we control its state
+      const jobId = jobManager.createJob("testuser");
+      expect(jobId).not.toBeNull();
+
+      // Job starts in "pending" state — verify precondition
+      const job = jobManager.getJob(jobId!);
+      expect(job).toBeDefined();
+      expect(job!.status).toBe("pending");
+
+      const res = await agent.get(`/api/analyze/${jobId}/result`);
+      expect(res.status).toBe(409);
+      expect(res.body).toHaveProperty("error", "not_ready");
+    });
+
+    it("returns analysis result when job is complete", async () => {
+      const agent = request.agent(app);
+      await authenticateAgent(agent);
+
+      // Create a job directly and mark it complete with a known result
+      const jobId = jobManager.createJob("testuser");
+      expect(jobId).not.toBeNull();
+      jobManager.sendComplete(jobId!, {
+        framework: "nextjs-app",
+        screens: [],
+        transitions: [],
+      });
+
+      // Verify precondition
+      const job = jobManager.getJob(jobId!);
+      expect(job).toBeDefined();
+      expect(job!.status).toBe("complete");
+
+      const res = await agent.get(`/api/analyze/${jobId}/result`);
+      expect(res.status).toBe(200);
+      expect(res.body).toHaveProperty("framework");
+      expect(res.body).toHaveProperty("screens");
+      expect(res.body).toHaveProperty("transitions");
+    });
+  });
+
   describe("SSE integration", () => {
     it("streams progress events and complete event in order", async () => {
       const agent = request.agent(app);
