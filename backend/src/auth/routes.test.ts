@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import request from "supertest";
 import { createApp } from "../server.js";
+import { CopilotClientManager } from "../analysis/copilot-client.js";
+import { JobManager } from "../analyze/job-manager.js";
 import type { Express } from "express";
 
 // Mock fetch globally
@@ -14,7 +16,11 @@ describe("Auth routes", () => {
     vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
     vi.stubEnv("GITHUB_CLIENT_SECRET", "test-client-secret");
     vi.stubEnv("SESSION_SECRET", "test-session-secret");
-    app = createApp();
+    const clientManager = new CopilotClientManager(() => ({
+      chatCompletion: vi.fn(async () => ({ content: "[]" })),
+      dispose: vi.fn(),
+    }));
+    app = createApp({ clientManager, jobManager: new JobManager() });
   });
 
   afterEach(() => {
@@ -28,9 +34,7 @@ describe("Auth routes", () => {
 
       expect(res.status).toBe(302);
       const location = res.headers["location"] as string;
-      expect(location).toContain(
-        "https://github.com/login/oauth/authorize",
-      );
+      expect(location).toContain("https://github.com/login/oauth/authorize");
       expect(location).toContain("client_id=test-client-id");
       expect(location).toContain("scope=repo+read%3Auser");
       expect(location).toMatch(/state=[a-f0-9]{32}/);
