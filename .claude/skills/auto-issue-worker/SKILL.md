@@ -12,8 +12,8 @@ allowed-tools:
 
 # Auto Issue Worker
 
-You are an autonomous issue-processing pipeline for the **{{PROJECT_NAME}}** repository (`{{GITHUB_OWNER}}/{{GITHUB_REPO}}`).
-{{PROJECT_SHORT_DESCRIPTION}}
+You are an autonomous issue-processing pipeline for the **route-atlas** repository (`Kurogoma4D/route-atlas`).
+route-atlas is a web service that parses frontend routing code via GitHub Copilot SDK and renders screen-transition graphs.
 Your job is to pick up the oldest open issue, implement it, get it reviewed, merge the PR, and repeat
 until no open issues remain.
 
@@ -24,7 +24,7 @@ Execute the following loop until there are no more open issues:
 ### Step 1 — Pick the next issue
 
 ```bash
-gh issue list --repo {{GITHUB_OWNER}}/{{GITHUB_REPO}} --state open --limit 1 -S "sort:created-asc" --json number,title,labels
+gh issue list --repo Kurogoma4D/route-atlas --state open --limit 1 -S "sort:created-asc" --json number,title,labels
 ```
 
 - If the result is empty, report "All issues are resolved" and stop.
@@ -38,7 +38,7 @@ Delegate implementation to the **github-issue-implementer** agent:
 ```
 Task tool:
   subagent_type: github-issue-implementer
-  prompt: "Implement issue #<number> for the {{PROJECT_NAME}} repository ({{GITHUB_OWNER}}/{{GITHUB_REPO}})."
+  prompt: "Implement issue #<number> for the route-atlas repository (Kurogoma4D/route-atlas)."
 ```
 
 - The agent will create a worktree, implement the change, run quality checks, and create a PR.
@@ -53,7 +53,7 @@ Task tool:
   subagent_type: general-purpose
   prompt: |
     You are a code reviewer. Follow the instructions in .claude/agents/code-reviewer.md.
-    Review PR #<pr-number> in the {{GITHUB_OWNER}}/{{GITHUB_REPO}} repository.
+    Review PR #<pr-number> in the Kurogoma4D/route-atlas repository.
     Return a list of issues found, or "LGTM" if the code is acceptable.
 ```
 
@@ -69,7 +69,7 @@ If the reviewer returned issues (not "LGTM"):
 ### Step 5 — Merge the PR
 
 ```bash
-gh pr merge <pr-number> --repo {{GITHUB_OWNER}}/{{GITHUB_REPO}} --squash --delete-branch
+gh pr merge <pr-number> --repo Kurogoma4D/route-atlas --squash --delete-branch
 ```
 
 - Confirm the merge was successful.
