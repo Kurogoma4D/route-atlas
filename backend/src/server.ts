@@ -92,6 +92,11 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
     );
     app.use(express.static(frontendDistPath));
 
+    // 404 for unmatched API routes
+    app.all("/api/*", (_req, res) => {
+      res.status(404).json({ error: "Not found" });
+    });
+
     // SPA fallback: serve index.html for any non-API route
     app.get("*", (_req, res) => {
       res.sendFile(path.join(frontendDistPath, "index.html"));

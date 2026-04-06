@@ -1,5 +1,5 @@
-# ---- Stage 1: Build frontend ----
-FROM node:20-slim AS frontend-build
+# ---- Stage 1: Install dependencies ----
+FROM node:20-slim AS deps
 
 WORKDIR /app
 
@@ -12,40 +12,34 @@ COPY frontend/package.json frontend/
 # Install all workspace dependencies
 RUN npm ci
 
-# Copy source files
+# ---- Stage 2: Build shared ----
+FROM deps AS shared-build
+
 COPY shared/ shared/
+
+RUN npm run build -w shared
+
+# ---- Stage 3: Build frontend ----
+FROM shared-build AS frontend-build
+
 COPY frontend/ frontend/
 
-# Build shared first, then frontend
-RUN npm run build -w shared
 RUN npm run build -w frontend
 
-# ---- Stage 2: Build backend ----
-FROM node:20-slim AS backend-build
+# ---- Stage 4: Build backend ----
+FROM shared-build AS backend-build
 
-WORKDIR /app
-
-# Copy root workspace files
-COPY package.json package-lock.json ./
-COPY shared/package.json shared/
-COPY backend/package.json backend/
-COPY frontend/package.json frontend/
-
-# Install all workspace dependencies
-RUN npm ci
-
-# Copy source files
-COPY shared/ shared/
 COPY backend/ backend/
 
-# Build shared first, then backend
-RUN npm run build -w shared
 RUN npm run build -w backend
 
-# ---- Stage 3: Production image ----
+# ---- Stage 5: Production image ----
 FROM node:20-slim AS production
 
 WORKDIR /app
+
+# Create non-root user
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 
 # Copy root workspace files
 COPY package.json package-lock.json ./
@@ -71,5 +65,7 @@ ENV NODE_ENV=production
 ENV PORT=3000
 
 EXPOSE 3000
+
+USER appuser
 
 CMD ["node", "backend/dist/main.js"]
