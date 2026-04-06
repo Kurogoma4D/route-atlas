@@ -25,8 +25,11 @@ export const routes: Routes = [
         loadComponent: () =>
           import("./analyze/analyze").then((m) => m.AnalyzeComponent),
       },
-      // Future protected routes (e.g., /graph/:jobId)
-      // will be added here
+      {
+        path: "graph/:jobId",
+        loadComponent: () =>
+          import("./graph/graph").then((m) => m.GraphComponent),
+      },
     ],
   },
   {
