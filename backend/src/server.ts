@@ -1,12 +1,15 @@
 import express from "express";
 import cors from "cors";
 import session from "express-session";
-import type { AnalysisResult } from "@route-atlas/shared";
 import { createAuthRouter, requireAuth } from "./auth/routes.js";
 import { createReposRouter } from "./repos/routes.js";
+import { createAnalyzeRouter } from "./analyze/routes.js";
+import type { AnalyzeRouterDeps } from "./analyze/routes.js";
+import { CopilotClientManager } from "./analysis/copilot-client.js";
+import { JobManager } from "./analyze/job-manager.js";
 // Session type augmentation loaded via auth/session.d.ts
 
-export function createApp() {
+export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
   const app = express();
 
   const frontendOrigin =
@@ -55,19 +58,26 @@ export function createApp() {
   // Protected: Repository listing routes
   app.use("/api/repos", requireAuth, createReposRouter());
 
-  // Protected: Placeholder endpoint for future analysis feature
-  app.post("/api/analyze", requireAuth, (_req, res) => {
-    const placeholder: AnalysisResult = {
-      framework: "unknown",
-      screens: [],
-      transitions: [],
-    };
-    res.json(placeholder);
-  });
+  // Protected: Analysis routes (SSE progress)
+  // Create default deps when not provided so the default exported app
+  // always registers analyze routes.
+  const resolvedAnalyzeDeps: AnalyzeRouterDeps = analyzeDeps ?? {
+    clientManager: new CopilotClientManager((_token) => ({
+      chatCompletion: async () => ({ content: "[]" }),
+      dispose: () => {},
+    })),
+    jobManager: new JobManager(),
+  };
+  app.use(
+    "/api/analyze",
+    requireAuth,
+    createAnalyzeRouter(resolvedAnalyzeDeps),
+  );
 
   return app;
 }
 
 // Default export for backward compatibility with existing tests
+// Note: default app does not include analyze routes (requires CopilotClientManager)
 const app = createApp();
 export { app };
