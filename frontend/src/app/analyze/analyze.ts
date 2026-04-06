@@ -91,6 +91,7 @@ export class AnalyzeComponent implements OnInit {
   }
 
   private connectToJob(jobId: string) {
+    this.currentStep.set("detecting_framework");
     this.analyzeService
       .connectToJob(jobId)
       .pipe(takeUntilDestroyed(this.destroyRef))

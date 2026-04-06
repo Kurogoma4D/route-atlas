@@ -106,8 +106,20 @@ export class AnalyzeService {
             });
           }
           eventSource.close();
+          subscriber.complete();
         });
       });
+
+      eventSource.onerror = () => {
+        this.ngZone.run(() => {
+          subscriber.next({
+            type: "error" as const,
+            data: { message: "Connection to analysis server lost" },
+          });
+          eventSource.close();
+          subscriber.complete();
+        });
+      };
 
       // Cleanup on unsubscribe
       return () => {

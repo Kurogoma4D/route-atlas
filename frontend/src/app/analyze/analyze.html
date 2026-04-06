@@ -1,5 +1,5 @@
 <div class="analyze-container">
-  <h2>解析中...</h2>
+  <h2>{{ errorMessage() ? 'エラーが発生しました' : '解析中...' }}</h2>
 
   @if (errorMessage()) {
   <mat-card class="error-card">
