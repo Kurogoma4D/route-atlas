@@ -20,7 +20,12 @@ export const routes: Routes = [
         redirectTo: "repos",
         pathMatch: "full" as const,
       },
-      // Future protected routes (e.g., /analyze/:jobId, /graph/:jobId)
+      {
+        path: "analyze/:jobId",
+        loadComponent: () =>
+          import("./analyze/analyze").then((m) => m.AnalyzeComponent),
+      },
+      // Future protected routes (e.g., /graph/:jobId)
       // will be added here
     ],
   },

@@ -41,7 +41,10 @@
           @if (filteredRepos().length === 0) {
           <p class="empty-message">リポジトリが見つかりません。</p>
           } @else {
-          <mat-selection-list [multiple]="false" (selectionChange)="selectRepo(filteredRepos()[$event.options[0]?.value])">
+          <mat-selection-list
+            [multiple]="false"
+            (selectionChange)="selectRepo(filteredRepos()[$event.options[0]?.value])"
+          >
             @for (repo of filteredRepos(); track repo.id; let i = $index) {
             <mat-list-option
               [selected]="selectedRepo()?.id === repo.id"
@@ -100,7 +103,10 @@
           } @else if (branchError()) {
           <p class="error-message">{{ branchError() }}</p>
           } @else {
-          <mat-selection-list [multiple]="false" (selectionChange)="selectBranch(branches()[$event.options[0]?.value])">
+          <mat-selection-list
+            [multiple]="false"
+            (selectionChange)="selectBranch(branches()[$event.options[0]?.value])"
+          >
             @for (branch of branches(); track branch.name; let i = $index) {
             <mat-list-option
               [selected]="selectedBranch()?.name === branch.name"
@@ -117,14 +123,25 @@
           </mat-selection-list>
           }
         </mat-card-content>
+        @if (analysisError()) {
+        <div class="analysis-error">
+          <p class="error-message">{{ analysisError() }}</p>
+        </div>
+        }
         <mat-card-actions align="end">
           <button
             mat-flat-button
             [disabled]="!canStartAnalysis()"
             (click)="onStartAnalysis()"
           >
-            <mat-icon>play_arrow</mat-icon>
-            解析開始
+            @if (startingAnalysis()) {
+            <mat-spinner diameter="20"></mat-spinner>
+            } @else {
+            <ng-container>
+              <mat-icon>play_arrow</mat-icon>
+              解析開始
+            </ng-container>
+            }
           </button>
         </mat-card-actions>
       </mat-card>

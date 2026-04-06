@@ -7,6 +7,7 @@ import {
   computed,
 } from "@angular/core";
 import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
+import { Router } from "@angular/router";
 import { MatButtonModule } from "@angular/material/button";
 import { MatCardModule } from "@angular/material/card";
 import { MatFormFieldModule } from "@angular/material/form-field";
@@ -16,6 +17,7 @@ import { MatListModule } from "@angular/material/list";
 import { MatProgressBarModule } from "@angular/material/progress-bar";
 import { MatProgressSpinnerModule } from "@angular/material/progress-spinner";
 import { ReposService } from "./repos.service";
+import { AnalyzeService } from "../analyze/analyze.service";
 import type { RepoInfo, BranchInfo } from "@route-atlas/shared";
 
 @Component({
@@ -36,6 +38,8 @@ import type { RepoInfo, BranchInfo } from "@route-atlas/shared";
 })
 export class ReposComponent implements OnInit {
   private reposService = inject(ReposService);
+  private analyzeService = inject(AnalyzeService);
+  private router = inject(Router);
   private destroyRef = inject(DestroyRef);
 
   // Repos state
@@ -65,9 +69,16 @@ export class ReposComponent implements OnInit {
     );
   });
 
+  // Analysis state
+  readonly startingAnalysis = signal(false);
+  readonly analysisError = signal<string | null>(null);
+
   // Computed: can start analysis
   readonly canStartAnalysis = computed(
-    () => this.selectedRepo() !== null && this.selectedBranch() !== null,
+    () =>
+      this.selectedRepo() !== null &&
+      this.selectedBranch() !== null &&
+      !this.startingAnalysis(),
   );
 
   ngOnInit() {
@@ -159,7 +170,29 @@ export class ReposComponent implements OnInit {
   }
 
   onStartAnalysis() {
-    // Destination will be implemented in a future issue
-    // For now, this is a placeholder
+    const repo = this.selectedRepo();
+    const branch = this.selectedBranch();
+    if (!repo || !branch) return;
+
+    this.startingAnalysis.set(true);
+    this.analysisError.set(null);
+
+    this.analyzeService
+      .startAnalysis({
+        owner: repo.owner,
+        repo: repo.name,
+        branch: branch.name,
+      })
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe({
+        next: (response) => {
+          this.startingAnalysis.set(false);
+          this.router.navigate(["/analyze", response.jobId]);
+        },
+        error: () => {
+          this.analysisError.set("解析の開始に失敗しました。");
+          this.startingAnalysis.set(false);
+        },
+      });
   }
 }
