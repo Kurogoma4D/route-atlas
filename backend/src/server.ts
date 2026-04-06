@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
 import session from "express-session";
@@ -9,15 +11,23 @@ import { CopilotClientManager } from "./analysis/copilot-client.js";
 import { JobManager } from "./analyze/job-manager.js";
 // Session type augmentation loaded via auth/session.d.ts
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
   const app = express();
+
+  const isProduction = process.env["NODE_ENV"] === "production";
 
   const frontendOrigin =
     process.env["FRONTEND_ORIGIN"] ?? "http://localhost:4200";
 
   app.use(
     cors({
-      origin: frontendOrigin,
+      origin: isProduction
+        ? (process.env["ALLOWED_ORIGINS"]?.split(",").map((o) => o.trim()) ??
+          frontendOrigin)
+        : frontendOrigin,
       credentials: true,
     }),
   );
@@ -73,6 +83,20 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
     requireAuth,
     createAnalyzeRouter(resolvedAnalyzeDeps),
   );
+
+  // In production, serve Angular static files and handle SPA routing
+  if (isProduction) {
+    const frontendDistPath = path.resolve(
+      __dirname,
+      "../../frontend/dist/frontend/browser",
+    );
+    app.use(express.static(frontendDistPath));
+
+    // SPA fallback: serve index.html for any non-API route
+    app.get("*", (_req, res) => {
+      res.sendFile(path.join(frontendDistPath, "index.html"));
+    });
+  }
 
   return app;
 }
