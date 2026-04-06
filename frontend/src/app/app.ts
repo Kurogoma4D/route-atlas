@@ -9,6 +9,4 @@ import { MatCardModule } from "@angular/material/card";
   templateUrl: "./app.html",
   styleUrl: "./app.scss",
 })
-export class App {
-  protected readonly title = "Route Atlas";
-}
+export class App {}

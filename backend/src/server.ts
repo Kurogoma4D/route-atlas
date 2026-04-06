@@ -3,8 +3,8 @@ import cors from "cors";
 import type { AnalysisResult } from "@route-atlas/shared";
 
 const app = express();
-const PORT = process.env["PORT"] ?? 3000;
 
+// TODO: Lock down CORS origin before deployment (currently allows all origins)
 app.use(cors());
 app.use(express.json());
 
@@ -24,10 +24,6 @@ app.post("/api/analyze", (_req, res) => {
     transitions: [],
   };
   res.json(placeholder);
-});
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
 });
 
 export { app };
