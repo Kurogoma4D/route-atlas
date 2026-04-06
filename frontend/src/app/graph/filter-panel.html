@@ -1,0 +1,92 @@
+<div class="filter-panel">
+  <div class="panel-header">
+    <span class="panel-title">Filters</span>
+    <button mat-icon-button (click)="close()" aria-label="Close filter panel">
+      <mat-icon>close</mat-icon>
+    </button>
+  </div>
+
+  <!-- Transition type toggles -->
+  <section class="filter-section">
+    <h4 class="section-title">Transition Type</h4>
+    <mat-checkbox
+      [checked]="transitionFilters().link"
+      (change)="onTransitionToggle('link', $event.checked)"
+    >
+      Link
+    </mat-checkbox>
+    <mat-checkbox
+      [checked]="transitionFilters().programmatic"
+      (change)="onTransitionToggle('programmatic', $event.checked)"
+    >
+      Programmatic
+    </mat-checkbox>
+    <mat-checkbox
+      [checked]="transitionFilters().redirect"
+      (change)="onTransitionToggle('redirect', $event.checked)"
+    >
+      Redirect
+    </mat-checkbox>
+  </section>
+
+  <!-- Variant highlight -->
+  <section class="filter-section">
+    <h4 class="section-title">Highlight by Variant</h4>
+    <mat-form-field appearance="outline" class="full-width">
+      <mat-label>Variant type</mat-label>
+      <mat-select
+        [value]="highlightedVariantType()"
+        (selectionChange)="onVariantHighlightChange($event.value)"
+      >
+        <mat-option [value]="null">None</mat-option>
+        @for (vt of variantTypes; track vt.value) {
+        <mat-option [value]="vt.value">{{ vt.label }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+  </section>
+
+  <!-- Search -->
+  <section class="filter-section">
+    <h4 class="section-title">Search</h4>
+    <mat-form-field appearance="outline" class="full-width">
+      <mat-label>Screen name or path</mat-label>
+      <input
+        matInput
+        [value]="searchQuery()"
+        (input)="onSearch($any($event.target).value)"
+        placeholder="e.g. /dashboard"
+      />
+      <mat-icon matSuffix>search</mat-icon>
+    </mat-form-field>
+    @if (searchResultCount() !== null) {
+    <p class="search-result-count">
+      {{ searchResultCount() }} match{{ searchResultCount() === 1 ? '' : 'es' }}
+      found
+    </p>
+    }
+  </section>
+
+  <!-- Export buttons -->
+  <section class="filter-section">
+    <h4 class="section-title">Export</h4>
+    <div class="export-buttons">
+      <button
+        mat-stroked-button
+        (click)="exportPng()"
+        matTooltip="Download graph as PNG image"
+      >
+        <mat-icon>image</mat-icon>
+        PNG
+      </button>
+      <button
+        mat-stroked-button
+        (click)="exportSvg()"
+        matTooltip="Download graph as SVG vector"
+      >
+        <mat-icon>code</mat-icon>
+        SVG
+      </button>
+    </div>
+  </section>
+</div>

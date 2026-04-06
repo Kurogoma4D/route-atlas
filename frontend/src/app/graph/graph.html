@@ -21,11 +21,21 @@
     <button mat-icon-button (click)="fitGraph()" aria-label="Fit to screen">
       <mat-icon>fit_screen</mat-icon>
     </button>
+    <button
+      mat-icon-button
+      (click)="toggleFilterPanel()"
+      aria-label="Toggle filter panel"
+      matTooltip="Filter & Export"
+    >
+      <mat-icon>tune</mat-icon>
+    </button>
   </div>
   <div class="graph-content">
     <div #cyContainer class="cy-container"></div>
     @if (selectedNode()) {
     <app-detail-panel [node]="selectedNode()!" (closed)="closeDetailPanel()" />
+    } @if (filterPanelOpen()) {
+    <app-filter-panel [cy]="cyInstance()" (closed)="toggleFilterPanel()" />
     }
   </div>
   }

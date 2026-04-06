@@ -25,13 +25,16 @@ import { ActivatedRoute, Router } from "@angular/router";
 import { MatButtonModule } from "@angular/material/button";
 import { MatIconModule } from "@angular/material/icon";
 import { MatProgressSpinnerModule } from "@angular/material/progress-spinner";
+import { MatTooltipModule } from "@angular/material/tooltip";
 import cytoscape from "cytoscape";
 import dagre from "cytoscape-dagre";
 import type { Core, EventObject, NodeSingular } from "cytoscape";
 import type { AnalysisResult, Transition } from "@route-atlas/shared";
 import { GraphService } from "./graph.service";
+import { GraphFilterService } from "./graph-filter.service";
 import { DetailPanelComponent } from "./detail-panel";
 import type { SelectedNodeData } from "./detail-panel";
+import { FilterPanelComponent } from "./filter-panel";
 import { convertToCytoscapeElements } from "./graph-converter";
 
 // Register the dagre layout extension once
@@ -48,8 +51,11 @@ try {
     MatButtonModule,
     MatIconModule,
     MatProgressSpinnerModule,
+    MatTooltipModule,
     DetailPanelComponent,
+    FilterPanelComponent,
   ],
+  providers: [GraphFilterService],
   templateUrl: "./graph.html",
   styleUrl: "./graph.scss",
 })
@@ -59,15 +65,22 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
   private graphService = inject(GraphService);
   private destroyRef = inject(DestroyRef);
 
-  readonly cyContainer =
-    viewChild<ElementRef<HTMLDivElement>>("cyContainer");
+  readonly cyContainer = viewChild<ElementRef<HTMLDivElement>>("cyContainer");
 
   readonly loading = signal(true);
   readonly errorMessage = signal<string | null>(null);
   readonly selectedNode = signal<SelectedNodeData | null>(null);
+  readonly filterPanelOpen = signal(false);
 
-  private cy: Core | null = null;
+  /** Exposed as a signal so the filter panel can access the Cytoscape instance. */
+  readonly cyInstance = signal<Core | null>(null);
+
   private analysisResult: AnalysisResult | null = null;
+
+  /** Shorthand getter for internal use. */
+  private get cy(): Core | null {
+    return this.cyInstance();
+  }
 
   ngOnInit(): void {
     const jobId = this.route.snapshot.paramMap.get("jobId");
@@ -84,8 +97,8 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
-    this.cy?.destroy();
-    this.cy = null;
+    this.cyInstance()?.destroy();
+    this.cyInstance.set(null);
   }
 
   /** Navigate back to repos page. */
@@ -97,7 +110,12 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
   closeDetailPanel(): void {
     this.selectedNode.set(null);
     // Deselect all nodes
-    this.cy?.elements().unselect();
+    this.cyInstance()?.elements().unselect();
+  }
+
+  /** Toggle the filter/export panel. */
+  toggleFilterPanel(): void {
+    this.filterPanelOpen.update((open) => !open);
   }
 
   /** Fit the graph to the viewport. */
@@ -137,9 +155,7 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
 
     // In test environments without canvas support, use headless renderer
     const testCanvas =
-      typeof document !== "undefined"
-        ? document.createElement("canvas")
-        : null;
+      typeof document !== "undefined" ? document.createElement("canvas") : null;
     const hasCanvas =
       testCanvas !== null &&
       typeof testCanvas.getContext === "function" &&
@@ -245,9 +261,29 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
           "line-style": "dashed",
         },
       },
+      // --- Variant highlight class ---
+      {
+        selector: "node.variant-highlight",
+        style: {
+          "background-color": "#f57c00",
+          "border-width": 4,
+          "border-color": "#e65100",
+          color: "#ffffff",
+        },
+      },
+      // --- Search match class ---
+      {
+        selector: "node.search-match",
+        style: {
+          "background-color": "#43a047",
+          "border-width": 4,
+          "border-color": "#1b5e20",
+          color: "#ffffff",
+        },
+      },
     ];
 
-    this.cy = cytoscape({
+    const cyInstance = cytoscape({
       container: hasCanvas ? container : undefined,
       headless: !hasCanvas,
       elements,
@@ -265,15 +301,17 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
       boxSelectionEnabled: false,
     });
 
+    this.cyInstance.set(cyInstance);
+
     // Node click handler
-    this.cy.on("tap", "node[!isGroup]", (event: EventObject) => {
+    cyInstance.on("tap", "node[!isGroup]", (event: EventObject) => {
       const node = event.target as NodeSingular;
       this.onNodeClick(node);
     });
 
     // Click on background to close detail panel
-    this.cy.on("tap", (event: EventObject) => {
-      if (event.target === this.cy) {
+    cyInstance.on("tap", (event: EventObject) => {
+      if (event.target === cyInstance) {
         this.closeDetailPanel();
       }
     });
