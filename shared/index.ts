@@ -4,4 +4,6 @@ export type {
   Variant,
   VariantType,
   Transition,
+  UserInfo,
+  AuthError,
 } from "./types";

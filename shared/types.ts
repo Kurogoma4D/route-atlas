@@ -37,3 +37,14 @@ export interface Transition {
   method: string;
   condition?: string;
 }
+
+export interface UserInfo {
+  login: string;
+  avatarUrl: string;
+  name: string | null;
+}
+
+export interface AuthError {
+  error: string;
+  message: string;
+}

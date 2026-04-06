@@ -1,0 +1,24 @@
+<div class="login-container">
+  <mat-card class="login-card">
+    <mat-card-header>
+      <mat-card-title>
+        <h1>Route Atlas</h1>
+      </mat-card-title>
+      <mat-card-subtitle>
+        GitHub
+        リポジトリのフロントエンドコードを解析し、画面遷移をグラフとして可視化します。
+      </mat-card-subtitle>
+    </mat-card-header>
+    <mat-card-content>
+      @if (errorMessage()) {
+      <p class="error-message">{{ errorMessage() }}</p>
+      }
+    </mat-card-content>
+    <mat-card-actions align="end">
+      <button mat-flat-button (click)="onLogin()">
+        <mat-icon>login</mat-icon>
+        GitHub でログイン
+      </button>
+    </mat-card-actions>
+  </mat-card>
+</div>
