@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out-tsc/
+.angular/
+
+# Shared build artifacts (keep source, ignore compiled)
+shared/*.js
+shared/*.js.map
+shared/*.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
