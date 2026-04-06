@@ -76,9 +76,9 @@ export function createReposRouter(): Router {
   router.get("/", async (req: Request, res: Response) => {
     try {
       const token = getAccessToken(req);
-      const page = parseInt(req.query["page"] as string) || 1;
+      const page = Math.max(parseInt(req.query["page"] as string) || 1, 1);
       const perPage = Math.min(
-        parseInt(req.query["per_page"] as string) || 30,
+        Math.max(parseInt(req.query["per_page"] as string) || 30, 1),
         100,
       );
 
@@ -101,10 +101,9 @@ export function createReposRouter(): Router {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
         res.status(response.status).json({
           error: "github_api_error",
-          message: `GitHub API error: ${response.status} - ${errorText}`,
+          message: "Failed to fetch repositories",
         });
         return;
       }
@@ -115,7 +114,6 @@ export function createReposRouter(): Router {
 
       const result: ReposResponse = {
         repos: repos.map(mapRepo),
-        totalCount: repos.length,
         page,
         perPage,
         hasNextPage: hasNext,
@@ -150,10 +148,9 @@ export function createReposRouter(): Router {
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
         res.status(response.status).json({
           error: "github_api_error",
-          message: `GitHub API error: ${response.status} - ${errorText}`,
+          message: "Failed to fetch branches",
         });
         return;
       }

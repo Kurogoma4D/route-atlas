@@ -48,7 +48,6 @@ const mockReposResponse: ReposResponse = {
       htmlUrl: "https://github.com/user/react-site",
     },
   ],
-  totalCount: 3,
   page: 1,
   perPage: 30,
   hasNextPage: false,

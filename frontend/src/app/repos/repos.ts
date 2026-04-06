@@ -7,7 +7,6 @@ import {
   computed,
 } from "@angular/core";
 import { takeUntilDestroyed } from "@angular/core/rxjs-interop";
-import { FormsModule } from "@angular/forms";
 import { MatButtonModule } from "@angular/material/button";
 import { MatCardModule } from "@angular/material/card";
 import { MatFormFieldModule } from "@angular/material/form-field";
@@ -16,7 +15,6 @@ import { MatInputModule } from "@angular/material/input";
 import { MatListModule } from "@angular/material/list";
 import { MatProgressBarModule } from "@angular/material/progress-bar";
 import { MatProgressSpinnerModule } from "@angular/material/progress-spinner";
-import { MatChipsModule } from "@angular/material/chips";
 import { ReposService } from "./repos.service";
 import type { RepoInfo, BranchInfo } from "@route-atlas/shared";
 
@@ -24,7 +22,6 @@ import type { RepoInfo, BranchInfo } from "@route-atlas/shared";
   selector: "app-repos",
   standalone: true,
   imports: [
-    FormsModule,
     MatButtonModule,
     MatCardModule,
     MatFormFieldModule,
@@ -33,7 +30,6 @@ import type { RepoInfo, BranchInfo } from "@route-atlas/shared";
     MatListModule,
     MatProgressBarModule,
     MatProgressSpinnerModule,
-    MatChipsModule,
   ],
   templateUrl: "./repos.html",
   styleUrl: "./repos.scss",
@@ -116,7 +112,6 @@ export class ReposComponent implements OnInit {
           this.loadingMore.set(false);
         },
         error: () => {
-          this.error.set("追加のリポジトリ取得に失敗しました。");
           this.loadingMore.set(false);
         },
       });

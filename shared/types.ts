@@ -70,7 +70,6 @@ export interface BranchInfo {
 
 export interface ReposResponse {
   repos: RepoInfo[];
-  totalCount: number;
   page: number;
   perPage: number;
   hasNextPage: boolean;

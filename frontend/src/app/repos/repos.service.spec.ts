@@ -43,7 +43,6 @@ describe("ReposService", () => {
             htmlUrl: "https://github.com/user/test-repo",
           },
         ],
-        totalCount: 1,
         page: 1,
         perPage: 30,
         hasNextPage: false,
@@ -64,7 +63,6 @@ describe("ReposService", () => {
     it("should fetch repos with custom pagination", () => {
       const mockResponse = {
         repos: [],
-        totalCount: 0,
         page: 2,
         perPage: 10,
         hasNextPage: true,

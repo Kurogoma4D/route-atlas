@@ -7,8 +7,9 @@
     <mat-icon matPrefix>search</mat-icon>
     <input
       matInput
+      #searchInput
       [value]="searchQuery()"
-      (input)="onSearchInput($any($event.target).value)"
+      (input)="onSearchInput(searchInput.value)"
       placeholder="リポジトリ名を入力..."
     />
   </mat-form-field>
@@ -40,11 +41,11 @@
           @if (filteredRepos().length === 0) {
           <p class="empty-message">リポジトリが見つかりません。</p>
           } @else {
-          <mat-selection-list [multiple]="false">
-            @for (repo of filteredRepos(); track repo.id) {
+          <mat-selection-list [multiple]="false" (selectionChange)="selectRepo(filteredRepos()[$event.options[0]?.value])">
+            @for (repo of filteredRepos(); track repo.id; let i = $index) {
             <mat-list-option
               [selected]="selectedRepo()?.id === repo.id"
-              (click)="selectRepo(repo)"
+              [value]="i"
             >
               <div class="repo-item">
                 <div class="repo-name">
@@ -99,11 +100,11 @@
           } @else if (branchError()) {
           <p class="error-message">{{ branchError() }}</p>
           } @else {
-          <mat-selection-list [multiple]="false">
-            @for (branch of branches(); track branch.name) {
+          <mat-selection-list [multiple]="false" (selectionChange)="selectBranch(branches()[$event.options[0]?.value])">
+            @for (branch of branches(); track branch.name; let i = $index) {
             <mat-list-option
               [selected]="selectedBranch()?.name === branch.name"
-              (click)="selectBranch(branch)"
+              [value]="i"
             >
               <div class="branch-item">
                 <span>{{ branch.name }}</span>
