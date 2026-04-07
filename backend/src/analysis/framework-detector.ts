@@ -135,7 +135,6 @@ export function detectPlatform(fileTree: string[]): PlatformType {
     (f) => f.endsWith(".xcworkspace/contents.xcworkspacedata") && !isExcludedPath(f),
   );
   const hasPodfile = fileTree.some((f) => f === "Podfile");
-  const hasPackageSwift = fileTree.some((f) => f === "Package.swift");
 
   const hasIOSIndicator = hasXcodeproj || hasXcworkspace || hasPodfile;
 

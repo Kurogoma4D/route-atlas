@@ -18,6 +18,7 @@ import {
   detectiOSFramework,
   isAndroidFramework,
   isIOSFramework,
+  isExcludedPath,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
 import {
@@ -34,7 +35,6 @@ import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "./job-manager.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
-import { EXCLUDED_DIR_PREFIXES } from "../analysis/constants.js";
 
 // ---------------------------------------------------------------------------
 // Request body shape
@@ -256,7 +256,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       // For Android projects, fetch Gradle build files to detect the navigation library
       const gradlePatterns = ["**/build.gradle", "**/build.gradle.kts"];
       const gradleEntries = filterFilesByPatterns(allFiles, gradlePatterns).filter(
-        (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+        (f) => !isExcludedPath(f.path),
       );
       const gradleFiles = await fetchFileContents(
         owner,
@@ -271,7 +271,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       const iosSourcePatterns = ["**/*.swift", "**/*.m", "**/*.h"];
       const iosEntries = filterFilesByPatterns(allFiles, iosSourcePatterns)
         .filter(
-          (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+          (f) => !isExcludedPath(f.path),
         );
 
       // Prioritize files likely to contain UI imports so we don't miss
@@ -368,7 +368,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       allFiles,
       componentPatterns,
     ).filter(
-      (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+      (f) => !isExcludedPath(f.path),
     );
     const componentFiles = await fetchFileContents(
       owner,
