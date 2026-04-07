@@ -9,6 +9,7 @@
  * Supported frameworks:
  * - Next.js (App Router / Pages Router)
  * - Nuxt
+ * - Gatsby
  * - Angular
  * - React Router
  * - Vue Router
@@ -46,6 +47,7 @@ export type FrameworkName =
   | "flutter-go-router"
   | "flutter-auto-route"
   | "flutter-navigator"
+  | "gatsby"
   | "expo-router"
   | "react-navigation";
 
@@ -521,6 +523,13 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     resolve: () => ({
       framework: "nuxt",
       routingFilePatterns: ["pages/**/*.vue"],
+    }),
+  },
+  {
+    key: "gatsby",
+    resolve: () => ({
+      framework: "gatsby",
+      routingFilePatterns: ["src/pages/**/*.{tsx,jsx,ts,js}"],
     }),
   },
   {

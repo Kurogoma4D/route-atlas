@@ -105,6 +105,35 @@ describe("detectFramework", () => {
     });
   });
 
+  describe("Gatsby", () => {
+    it("detects Gatsby from dependencies", () => {
+      const result = detectFramework(
+        pkg({ gatsby: "5.0.0", react: "18.0.0" }),
+        ["src/pages/index.tsx", "src/pages/about.tsx"],
+      );
+      expect(result.framework).toBe("gatsby");
+      expect(result.routingFilePatterns).toContain(
+        "src/pages/**/*.{tsx,jsx,ts,js}",
+      );
+    });
+
+    it("detects Gatsby from devDependencies", () => {
+      const result = detectFramework(
+        devPkg({ gatsby: "5.0.0" }),
+        ["src/pages/index.tsx"],
+      );
+      expect(result.framework).toBe("gatsby");
+    });
+
+    it("prefers Gatsby over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({ gatsby: "5.0.0", "react-router-dom": "6.0.0", react: "18.0.0" }),
+        ["src/pages/index.tsx"],
+      );
+      expect(result.framework).toBe("gatsby");
+    });
+  });
+
   describe("Angular", () => {
     it("detects Angular from dependencies", () => {
       const result = detectFramework(
@@ -1086,6 +1115,14 @@ describe("isExcludedPath", () => {
 
   it("returns true for .expo paths", () => {
     expect(isExcludedPath(".expo/types/router.d.ts")).toBe(true);
+  });
+
+  it("returns true for .cache paths", () => {
+    expect(isExcludedPath(".cache/some-file.json")).toBe(true);
+  });
+
+  it("returns true for .gatsby paths", () => {
+    expect(isExcludedPath(".gatsby/some-file.json")).toBe(true);
   });
 
   it("returns false for android/ paths (not globally excluded)", () => {
