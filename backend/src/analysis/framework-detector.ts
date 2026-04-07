@@ -14,6 +14,8 @@
  * - SvelteKit
  */
 
+import { EXCLUDED_DIR_PREFIXES } from "./constants.js";
+
 export type FrameworkName =
   | "nextjs-app"
   | "nextjs-pages"
@@ -22,7 +24,8 @@ export type FrameworkName =
   | "react-router"
   | "vue-router"
   | "remix"
-  | "sveltekit";
+  | "sveltekit"
+  | "plain-html";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -32,7 +35,7 @@ export interface FrameworkDetectionResult {
 export class UnsupportedFrameworkError extends Error {
   constructor(message?: string) {
     super(
-      message ?? "No supported frontend framework detected in package.json",
+      message ?? "No supported frontend framework or HTML files detected",
     );
     this.name = "UnsupportedFrameworkError";
   }
@@ -193,6 +196,17 @@ export function detectFramework(
     if (depKeys.has(rule.key)) {
       return rule.resolve(fileTree);
     }
+  }
+
+  // Fallback: detect plain HTML sites when .html files exist in the tree
+  const hasHtmlFiles = fileTree.some(
+    (f) => f.endsWith(".html") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+  );
+  if (hasHtmlFiles) {
+    return {
+      framework: "plain-html",
+      routingFilePatterns: ["**/*.html"],
+    };
   }
 
   throw new UnsupportedFrameworkError();

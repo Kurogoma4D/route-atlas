@@ -178,7 +178,7 @@ describe("detectFramework", () => {
 
     it("error message is descriptive", () => {
       expect(() => detectFramework({})).toThrow(
-        "No supported frontend framework detected in package.json",
+        "No supported frontend framework or HTML files detected",
       );
     });
 
@@ -241,6 +241,70 @@ describe("detectFramework", () => {
     it("handles Next.js with bare pages directory path", () => {
       const result = detectFramework(pkg({ next: "14.0.0" }), ["pages"]);
       expect(result.framework).toBe("nextjs-pages");
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 3. Plain HTML fallback
+  // ---------------------------------------------------------------------------
+  describe("Plain HTML fallback", () => {
+    it("detects plain-html when no framework matches and .html files exist", () => {
+      const result = detectFramework(pkg({ lodash: "4.0.0" }), [
+        "index.html",
+        "about.html",
+        "css/style.css",
+      ]);
+      expect(result.framework).toBe("plain-html");
+      expect(result.routingFilePatterns).toContain("**/*.html");
+    });
+
+    it("detects plain-html with empty package.json when .html files exist", () => {
+      const result = detectFramework({}, ["index.html", "contact/index.html"]);
+      expect(result.framework).toBe("plain-html");
+      expect(result.routingFilePatterns).toEqual(["**/*.html"]);
+    });
+
+    it("detects plain-html when package.json has no relevant dependencies", () => {
+      const result = detectFramework(
+        { dependencies: {}, devDependencies: {} },
+        ["index.html"],
+      );
+      expect(result.framework).toBe("plain-html");
+    });
+
+    it("does not detect plain-html when a framework is present", () => {
+      const result = detectFramework(pkg({ next: "14.0.0" }), [
+        "app/page.tsx",
+        "public/index.html",
+      ]);
+      expect(result.framework).toBe("nextjs-app");
+    });
+
+    it("ignores .html files in non-source directories (node_modules, dist, etc.)", () => {
+      expect(() =>
+        detectFramework(pkg({ lodash: "4.0.0" }), [
+          "node_modules/some-lib/index.html",
+          "dist/index.html",
+          "build/index.html",
+          ".next/server/index.html",
+          "out/index.html",
+          ".nuxt/index.html",
+          ".svelte-kit/index.html",
+          "vendor/index.html",
+          "public/index.html",
+          "static/index.html",
+        ]),
+      ).toThrow(UnsupportedFrameworkError);
+    });
+
+    it("throws UnsupportedFrameworkError when no framework and no .html files", () => {
+      expect(() =>
+        detectFramework(pkg({ lodash: "4.0.0" }), ["src/main.py"]),
+      ).toThrow(UnsupportedFrameworkError);
+    });
+
+    it("throws UnsupportedFrameworkError for empty file tree and no framework", () => {
+      expect(() => detectFramework({}, [])).toThrow(UnsupportedFrameworkError);
     });
   });
 });

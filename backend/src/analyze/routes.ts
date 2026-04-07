@@ -26,6 +26,7 @@ import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "./job-manager.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
+import { EXCLUDED_DIR_PREFIXES } from "../analysis/constants.js";
 
 // ---------------------------------------------------------------------------
 // Request body shape
@@ -238,37 +239,32 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const { files: allFiles } = await fetchFileTree(owner, repo, branch, token);
     const allPaths = allFiles.map((f) => f.path);
 
-    // Find and parse package.json
+    // Find and parse package.json (may not exist for plain HTML sites)
     const pkgEntry = allFiles.find((f) => f.path === "package.json");
-    if (!pkgEntry) {
-      jobManager.sendError(jobId, "package.json not found in repository root");
-      return;
-    }
 
-    const pkgContents = await fetchFileContents(
-      owner,
-      repo,
-      [pkgEntry],
-      token,
-      {
-        ref: branch,
-      },
-    );
-
-    if (!pkgContents[0]) {
-      jobManager.sendError(jobId, "Failed to fetch package.json contents");
-      return;
-    }
-
-    let packageJson: PackageJson;
-    try {
-      packageJson = JSON.parse(pkgContents[0].content) as PackageJson;
-    } catch {
-      jobManager.sendError(
-        jobId,
-        "package.json contains invalid JSON and could not be parsed",
+    let packageJson: PackageJson = {};
+    if (pkgEntry) {
+      const pkgContents = await fetchFileContents(
+        owner,
+        repo,
+        [pkgEntry],
+        token,
+        {
+          ref: branch,
+        },
       );
-      return;
+
+      if (pkgContents[0]) {
+        try {
+          packageJson = JSON.parse(pkgContents[0].content) as PackageJson;
+        } catch {
+          jobManager.sendError(
+            jobId,
+            "package.json contains invalid JSON and could not be parsed",
+          );
+          return;
+        }
+      }
     }
 
     const { framework, routingFilePatterns } = detectFramework(
@@ -291,17 +287,8 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       { ref: branch },
     );
 
-    // Fetch component files (all .ts/.tsx/.js/.jsx/.vue/.svelte files)
+    // Fetch component files (all .ts/.tsx/.js/.jsx/.vue/.svelte/.html files)
     // excluding common non-source directories
-    const EXCLUDED_DIR_PREFIXES = [
-      "node_modules/",
-      "dist/",
-      "build/",
-      ".next/",
-      "out/",
-      ".nuxt/",
-      ".svelte-kit/",
-    ];
     const componentPatterns = [
       "**/*.tsx",
       "**/*.jsx",
@@ -309,6 +296,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       "**/*.js",
       "**/*.vue",
       "**/*.svelte",
+      ...(framework === "plain-html" ? ["**/*.html"] : []),
     ];
     const componentEntries = filterFilesByPatterns(
       allFiles,
