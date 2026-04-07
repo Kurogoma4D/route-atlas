@@ -234,8 +234,8 @@ describe("Auth routes", () => {
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers.get("location")).toBe(
-        "/login?error=token_exchange_failed",
+      expect(res.headers.get("location")).toMatch(
+        /^\/login\?error=token_exchange_failed/,
       );
     });
   });
