@@ -169,7 +169,7 @@ For Ember.js projects (convention-based routing):
 - Nested routes are defined by passing a callback: this.route('parent', function() { this.route('child'); }) which produces the path /parent/child.
 - this.route('name') maps to the path /name by default (e.g. this.route('about') -> /about).
 - this.route('name', { path: '/custom' }) overrides the default path.
-- Each route in app/routes/*.js (or .ts) is a Route class that corresponds to a route definition.
+- Each route in app/routes/**/*.js (or .ts) is a Route class that corresponds to a route definition.
 - The index route (this.route('index') or implicit) maps to "/".
 - Files under app/routes/ follow Ember conventions: app/routes/about.js corresponds to the "about" route.
 
@@ -220,7 +220,9 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
             ? "app/src/main/java/com/example/HomeFragment.kt"
             : isIOS
               ? "Sources/Views/HomeView.swift"
-              : "app/page.tsx";
+              : isEmberFramework(framework)
+                ? "app/routes/index.js"
+                : "app/page.tsx";
 
   return `${frameworkInstructions}
 

@@ -635,6 +635,7 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
       routingFilePatterns: [
         "app/router.{js,ts}",
         "app/routes/**/*.{js,ts}",
+        "app/templates/**/*.hbs",
       ],
     }),
   },
