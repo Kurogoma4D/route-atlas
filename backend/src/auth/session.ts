@@ -63,6 +63,7 @@ declare module "hono" {
 
 const SESSION_COOKIE_NAME = "ra_sid";
 const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
+const SESSION_ID_PATTERN = /^[0-9a-f]{48}$/;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -71,7 +72,7 @@ const SESSION_TTL_SECONDS = 24 * 60 * 60; // 24 hours
 function generateSessionId(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
-  // Convert to URL-safe base64-ish hex string
+  // Convert to hex string (48 hex characters from 24 random bytes)
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
@@ -103,8 +104,11 @@ export function sessionMiddleware() {
       ? ((c.env as Record<string, unknown>)["SESSIONS"] as KVLike)
       : getInMemoryKV();
 
-    // Read session ID from cookie
+    // Read session ID from cookie and validate its format
     let sessionId = getCookie(c, SESSION_COOKIE_NAME) ?? "";
+    if (sessionId && !SESSION_ID_PATTERN.test(sessionId)) {
+      sessionId = "";
+    }
     let session: SessionData = {};
 
     if (sessionId) {
@@ -159,23 +163,14 @@ export function sessionMiddleware() {
 }
 
 /**
- * Destroy the session by removing the KV entry, clearing the cookie, and
- * resetting the context variable.
+ * Destroy the session by clearing the context variable and deleting the cookie.
+ * The middleware's post-handler logic will detect the empty session and delete
+ * the KV entry automatically.
  */
-export async function destroySession(
+export function destroySession(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   c: Context<any, any, any>,
-): Promise<void> {
-  const sessionId =
-    (c.get as (key: string) => string | undefined)("sessionId") ?? "";
-  const kv: KVLike = (c.env as Record<string, unknown>)?.["SESSIONS"]
-    ? ((c.env as Record<string, unknown>)["SESSIONS"] as KVLike)
-    : getInMemoryKV();
-
-  if (sessionId) {
-    await kv.delete(`session:${sessionId}`);
-  }
-
+): void {
   deleteCookie(c, SESSION_COOKIE_NAME, { path: "/" });
   c.set("session", {});
 }

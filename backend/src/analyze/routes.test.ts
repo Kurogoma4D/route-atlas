@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createApp } from "../server.js";
 import { JobManager } from "./job-manager.js";
 import { CopilotClientManager } from "../analysis/copilot-client.js";
+import { resetInMemoryKV } from "../auth/session.js";
 import type { LLMAdapter } from "../analysis/copilot-client.js";
 import type { Hono } from "hono";
 import type { SSEWriter } from "./job-manager.js";
@@ -263,6 +264,7 @@ describe("Analysis API routes", () => {
   afterEach(() => {
     jobManager.clear();
     clientManager.clear();
+    resetInMemoryKV();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
