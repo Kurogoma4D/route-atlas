@@ -20,6 +20,11 @@ vi.mock("../analysis/framework-detector.js", () => ({
     framework: "nextjs-app",
     routingFilePatterns: ["app/**/page.tsx"],
   })),
+  detectPlatform: vi.fn(() => "web"),
+  detectAndroidFramework: vi.fn(() => ({
+    framework: "android-navigation",
+    routingFilePatterns: ["**/res/navigation/*.xml"],
+  })),
 }));
 
 vi.mock("../analysis/github-file-fetcher.js", () => ({

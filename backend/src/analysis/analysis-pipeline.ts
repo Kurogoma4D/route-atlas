@@ -194,6 +194,7 @@ export class AnalysisPipeline {
           rawScreen.id,
           rawScreen.componentFile,
           componentSource.content,
+          input.framework,
         );
 
         const turn2Response = await adapter.chatCompletion({
@@ -237,7 +238,7 @@ export class AnalysisPipeline {
       path: s.path,
     }));
 
-    const turn3Prompt = buildTurn3Prompt(screenSummary, input.componentFiles);
+    const turn3Prompt = buildTurn3Prompt(screenSummary, input.componentFiles, input.framework);
     conversationHistory.push({ role: "user", content: turn3Prompt });
 
     const turn3Response = await this.adapter.chatCompletion({

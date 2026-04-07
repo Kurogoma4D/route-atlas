@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   detectFramework,
+  detectPlatform,
+  detectAndroidFramework,
   UnsupportedFrameworkError,
   type PackageJson,
 } from "./framework-detector.js";
@@ -306,5 +308,159 @@ describe("detectFramework", () => {
     it("throws UnsupportedFrameworkError for empty file tree and no framework", () => {
       expect(() => detectFramework({}, [])).toThrow(UnsupportedFrameworkError);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Platform detection
+// ---------------------------------------------------------------------------
+describe("detectPlatform", () => {
+  it("returns 'android' when build.gradle exists at root", () => {
+    expect(detectPlatform(["build.gradle", "app/src/main/java/Main.kt"])).toBe("android");
+  });
+
+  it("returns 'android' when build.gradle.kts exists at root", () => {
+    expect(detectPlatform(["build.gradle.kts", "settings.gradle.kts"])).toBe("android");
+  });
+
+  it("returns 'android' when settings.gradle exists at root", () => {
+    expect(detectPlatform(["settings.gradle", "gradle.properties"])).toBe("android");
+  });
+
+  it("returns 'android' when AndroidManifest.xml exists", () => {
+    expect(
+      detectPlatform(["app/src/main/AndroidManifest.xml", "README.md"]),
+    ).toBe("android");
+  });
+
+  it("ignores AndroidManifest.xml in excluded directories", () => {
+    expect(detectPlatform(["build/AndroidManifest.xml"])).toBe("web");
+  });
+
+  it("returns 'web' when no Android indicators are present", () => {
+    expect(detectPlatform(["package.json", "src/index.tsx"])).toBe("web");
+  });
+
+  it("returns 'web' for empty file tree", () => {
+    expect(detectPlatform([])).toBe("web");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Android framework detection
+// ---------------------------------------------------------------------------
+describe("detectAndroidFramework", () => {
+  it("detects android-compose-navigation when build.gradle contains navigation-compose", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "app/build.gradle.kts",
+        content: `
+          dependencies {
+            implementation("androidx.navigation:navigation-compose:2.7.0")
+          }
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-compose-navigation");
+    expect(result.routingFilePatterns).toContain("**/*NavGraph.kt");
+    expect(result.routingFilePatterns).toContain("**/*Screen.kt");
+    expect(result.routingFilePatterns).toContain("**/*Navigation.kt");
+  });
+
+  it("detects android-compose-navigation when build.gradle contains androidx.navigation.compose", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "app/build.gradle",
+        content: `
+          implementation 'androidx.navigation.compose:1.0.0'
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-compose-navigation");
+  });
+
+  it("detects android-navigation when build.gradle contains navigation-fragment", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "app/build.gradle.kts",
+        content: `
+          dependencies {
+            implementation("androidx.navigation:navigation-fragment-ktx:2.7.0")
+            implementation("androidx.navigation:navigation-ui-ktx:2.7.0")
+          }
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-navigation");
+    expect(result.routingFilePatterns).toContain("**/res/navigation/*.xml");
+    expect(result.routingFilePatterns).toContain("**/AndroidManifest.xml");
+    expect(result.routingFilePatterns).toContain("**/*Fragment.kt");
+    expect(result.routingFilePatterns).toContain("**/*Fragment.java");
+  });
+
+  it("detects android-navigation when build.gradle contains androidx.navigation", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "app/build.gradle",
+        content: `
+          implementation 'androidx.navigation:navigation-fragment:2.5.0'
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-navigation");
+  });
+
+  it("prefers compose-navigation over standard navigation when both present", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "app/build.gradle.kts",
+        content: `
+          dependencies {
+            implementation("androidx.navigation:navigation-fragment-ktx:2.7.0")
+            implementation("androidx.navigation:navigation-compose:2.7.0")
+          }
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-compose-navigation");
+  });
+
+  it("falls back to android-navigation for generic Android project", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "app/build.gradle",
+        content: `
+          dependencies {
+            implementation 'com.google.android.material:material:1.9.0'
+          }
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-navigation");
+    expect(result.routingFilePatterns).toContain("**/*Activity.kt");
+    expect(result.routingFilePatterns).toContain("**/*Activity.java");
+  });
+
+  it("falls back to android-navigation when no build files provided", () => {
+    const result = detectAndroidFramework([]);
+    expect(result.framework).toBe("android-navigation");
+  });
+
+  it("scans across multiple build files", () => {
+    const result = detectAndroidFramework([
+      {
+        path: "build.gradle.kts",
+        content: "plugins { id 'com.android.application' }",
+      },
+      {
+        path: "app/build.gradle.kts",
+        content: `
+          dependencies {
+            implementation("androidx.navigation:navigation-compose:2.7.0")
+          }
+        `,
+      },
+    ]);
+    expect(result.framework).toBe("android-compose-navigation");
   });
 });
