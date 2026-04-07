@@ -142,6 +142,7 @@ For SolidStart projects (file-based routing similar to SvelteKit):
 - [param] brackets represent dynamic route segments: src/routes/users/[id].tsx -> /users/:id.
 - [...catchAll] represents catch-all routes.
 - (group) directories (parenthesized names) are route groups — they do NOT appear in the URL path but organize routes logically.
+- API routes (files that only export GET, POST, PUT, DELETE, etc. request handler functions under src/routes/api/) are server endpoints, NOT screens — exclude them from the result.
 
 Use the file-based route path as the "path" (e.g. "/", "/about", "/users/:id").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
