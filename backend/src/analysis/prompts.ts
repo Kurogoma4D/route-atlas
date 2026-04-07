@@ -15,6 +15,7 @@ import {
   isFlutterFramework,
   isReactNativeFramework,
   isAstroFramework,
+  isEmberFramework,
 } from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
@@ -160,6 +161,20 @@ For Qwik City projects (directory-based routing):
 
 Use the directory-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the index.tsx/.jsx/.ts/.js file path.`;
+  } else if (isEmberFramework(framework)) {
+    frameworkInstructions = `Analyze the following Ember.js routing files and extract every screen / route.
+
+For Ember.js projects (convention-based routing):
+- app/router.js (or app/router.ts) contains route definitions using this.route('name', ...) inside Router.map(function() { ... }).
+- Nested routes are defined by passing a callback: this.route('parent', function() { this.route('child'); }) which produces the path /parent/child.
+- this.route('name') maps to the path /name by default (e.g. this.route('about') -> /about).
+- this.route('name', { path: '/custom' }) overrides the default path.
+- Each route in app/routes/**/*.js (or .ts) is a Route class that corresponds to a route definition.
+- The index route (this.route('index') or implicit) maps to "/".
+- Files under app/routes/ follow Ember conventions: app/routes/about.js corresponds to the "about" route.
+
+Use the route path as the "path" (e.g. "/", "/about", "/posts/:post_id").
+Set "componentFile" to the route file path (e.g. "app/routes/about.js") or the router file if no dedicated route file exists.`;
   } else if (isPlainHtml) {
     frameworkInstructions = `Analyze the following plain HTML files. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
@@ -205,7 +220,9 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
             ? "app/src/main/java/com/example/HomeFragment.kt"
             : isIOS
               ? "Sources/Views/HomeView.swift"
-              : "app/page.tsx";
+              : isEmberFramework(framework)
+                ? "app/routes/index.js"
+                : "app/page.tsx";
 
   return `${frameworkInstructions}
 
@@ -422,6 +439,15 @@ export function buildTurn3Prompt(
 - <a href="..."> standard anchor tags
 - window.location / location.href assignments
 - Form submit handlers that navigate`;
+  } else if (isEmberFramework(framework)) {
+    lookForItems = `- <LinkTo @route="..."> component (Ember template navigation)
+- this.transitionTo('routeName') in route classes
+- this.replaceWith('routeName') in route classes
+- this.router.transitionTo('routeName') via router service
+- this.router.replaceWith('routeName') via router service
+- {{link-to 'routeName'}} classic helper syntax
+- <a href="..."> standard anchor tags
+- window.location / location.href assignments`;
   } else {
     lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
@@ -450,7 +476,9 @@ export function buildTurn3Prompt(
                   ? `"A href", "useNavigate", "redirect"`
                   : framework === "qwik-city"
                     ? `"Link href", "useNavigate", "Form"`
-                    : `"Link", "router.push", "window.location"`;
+                    : isEmberFramework(framework)
+                      ? `"LinkTo", "transitionTo", "replaceWith", "router.transitionTo"`
+                      : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 

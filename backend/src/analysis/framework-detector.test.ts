@@ -9,6 +9,7 @@ import {
   isFlutterFramework,
   isReactNativeFramework,
   isAstroFramework,
+  isEmberFramework,
   isExcludedPath,
   UnsupportedFrameworkError,
   type PackageJson,
@@ -353,6 +354,50 @@ describe("detectFramework", () => {
         ["src/routes/index.tsx"],
       );
       expect(result.framework).toBe("qwik-city");
+    });
+  });
+
+  describe("Ember.js", () => {
+    it("detects Ember.js from ember-source in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "ember-source": "5.4.0", "ember-cli": "5.4.0" }),
+        ["app/router.js", "app/routes/about.js"],
+      );
+      expect(result.framework).toBe("ember");
+      expect(result.routingFilePatterns).toContain("app/router.{js,ts}");
+      expect(result.routingFilePatterns).toContain(
+        "app/routes/**/*.{js,ts}",
+      );
+    });
+
+    it("detects Ember.js from devDependencies", () => {
+      const result = detectFramework(
+        devPkg({ "ember-source": "5.4.0" }),
+        ["app/router.js"],
+      );
+      expect(result.framework).toBe("ember");
+    });
+
+    it("prefers Ember.js over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "ember-source": "5.4.0",
+          "react-router-dom": "6.0.0",
+        }),
+        ["app/router.js"],
+      );
+      expect(result.framework).toBe("ember");
+    });
+
+    it("prefers Ember.js over vue-router when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "ember-source": "5.4.0",
+          "vue-router": "4.0.0",
+        }),
+        ["app/router.js"],
+      );
+      expect(result.framework).toBe("ember");
     });
   });
 
@@ -1359,6 +1404,33 @@ describe("isAstroFramework", () => {
 });
 
 // ---------------------------------------------------------------------------
+// isEmberFramework helper
+// ---------------------------------------------------------------------------
+describe("isEmberFramework", () => {
+  it("returns true for ember", () => {
+    expect(isEmberFramework("ember")).toBe(true);
+  });
+
+  it("returns false for non-ember web frameworks", () => {
+    expect(isEmberFramework("nextjs-app")).toBe(false);
+    expect(isEmberFramework("react-router")).toBe(false);
+    expect(isEmberFramework("angular")).toBe(false);
+  });
+
+  it("returns false for android frameworks", () => {
+    expect(isEmberFramework("android-navigation")).toBe(false);
+  });
+
+  it("returns false for flutter frameworks", () => {
+    expect(isEmberFramework("flutter-go-router")).toBe(false);
+  });
+
+  it("returns false for ios frameworks", () => {
+    expect(isEmberFramework("ios-swiftui")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isExcludedPath shared helper
 // ---------------------------------------------------------------------------
 describe("isExcludedPath", () => {
@@ -1396,6 +1468,10 @@ describe("isExcludedPath", () => {
 
   it("returns true for .qwik paths", () => {
     expect(isExcludedPath(".qwik/some-file.json")).toBe(true);
+  });
+
+  it("returns true for tmp paths", () => {
+    expect(isExcludedPath("tmp/some-file.js")).toBe(true);
   });
 
   it("returns false for android/ paths (not globally excluded)", () => {
