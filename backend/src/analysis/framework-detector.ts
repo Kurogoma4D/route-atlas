@@ -27,6 +27,7 @@
  * - Astro
  * - SolidStart
  * - Qwik City
+ * - Ember.js
  * - Expo Router (React Native)
  * - React Navigation (React Native)
  */
@@ -57,7 +58,8 @@ export type FrameworkName =
   | "solid-start"
   | "expo-router"
   | "react-navigation"
-  | "qwik-city";
+  | "qwik-city"
+  | "ember";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -125,6 +127,13 @@ export function isReactNativeFramework(framework: string): boolean {
  */
 export function isAstroFramework(framework: string): boolean {
   return framework === "astro";
+}
+
+/**
+ * Returns true when the framework name refers to an Ember.js framework.
+ */
+export function isEmberFramework(framework: string): boolean {
+  return framework === "ember";
 }
 
 /**
@@ -616,6 +625,16 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
         "src/routes/**/*.{tsx,jsx,ts,js}",
         "src/**/routeTree.gen.ts",
         "src/**/router.{tsx,jsx,ts,js}",
+      ],
+    }),
+  },
+  {
+    key: "ember-source",
+    resolve: () => ({
+      framework: "ember" as const,
+      routingFilePatterns: [
+        "app/router.{js,ts}",
+        "app/routes/**/*.{js,ts}",
       ],
     }),
   },

@@ -29,6 +29,7 @@ export const EXCLUDED_DIR_PREFIXES = [
   ".astro/",
   ".solid/",
   ".qwik/",
+  "tmp/",
 ];
 
 /**
