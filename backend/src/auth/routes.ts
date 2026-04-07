@@ -9,6 +9,7 @@ const GITHUB_OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token";
 const GITHUB_API_USER_URL = "https://api.github.com/user";
 const GITHUB_API_COPILOT_URL =
   "https://api.github.com/copilot_internal/v2/token";
+const GITHUB_USER_AGENT = "route-atlas/1.0";
 
 type EnvBindings = Record<string, unknown>;
 
@@ -75,6 +76,7 @@ export async function fetchGitHubUser(accessToken: string): Promise<UserInfo> {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: "application/json",
+      "User-Agent": GITHUB_USER_AGENT,
     },
   });
 
@@ -103,6 +105,7 @@ export async function checkCopilotAccess(
       headers: {
         Authorization: `Bearer ${accessToken}`,
         Accept: "application/json",
+        "User-Agent": GITHUB_USER_AGENT,
       },
     });
     return response.ok;

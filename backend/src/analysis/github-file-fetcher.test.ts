@@ -111,6 +111,7 @@ describe("github-file-fetcher", () => {
           Authorization: `Bearer ${TOKEN}`,
           Accept: "application/vnd.github+json",
           "X-GitHub-Api-Version": "2022-11-28",
+          "User-Agent": "route-atlas/1.0",
         },
       });
     });
