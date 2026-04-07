@@ -35,18 +35,23 @@ function getClientSecret(env?: EnvBindings): string {
 export async function exchangeCodeForToken(
   code: string,
   env?: EnvBindings,
+  redirectUri?: string,
 ): Promise<string> {
+  const body: Record<string, string> = {
+    client_id: getClientId(env),
+    client_secret: getClientSecret(env),
+    code,
+  };
+  if (redirectUri) {
+    body["redirect_uri"] = redirectUri;
+  }
   const response = await fetch(GITHUB_OAUTH_TOKEN_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({
-      client_id: getClientId(env),
-      client_secret: getClientSecret(env),
-      code,
-    }),
+    body: JSON.stringify(body),
   });
 
   const data = (await response.json()) as {
@@ -166,9 +171,15 @@ export function createAuthRouter(): Hono {
     }
 
     try {
+      const cbEnv = c.env as EnvBindings | undefined;
+      const callbackUrl =
+        (cbEnv?.["OAUTH_CALLBACK_URL"] as string | undefined) ??
+        process.env["OAUTH_CALLBACK_URL"] ??
+        "http://localhost:3000/api/auth/callback";
       const accessToken = await exchangeCodeForToken(
         code,
-        c.env as EnvBindings | undefined,
+        cbEnv,
+        callbackUrl,
       );
 
       // Fetch user info to validate the token
