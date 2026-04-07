@@ -1,12 +1,17 @@
 /**
  * Copilot Client Abstraction & Per-User Instance Management
  *
- * Since the @github/copilot-sdk package does not exist yet, this module
- * provides a clean adapter interface (`LLMAdapter`) that can be swapped
- * out when the real SDK becomes available.
+ * Uses the @github/copilot-sdk to communicate with GitHub Copilot CLI
+ * for LLM chat completions. Each user gets their own CopilotClient
+ * instance authenticated with their OAuth token.
  *
  * Reference: SPEC.md §4.2, §8.2
  */
+
+import {
+  CopilotClient,
+  approveAll,
+} from "@github/copilot-sdk";
 
 // ---------------------------------------------------------------------------
 // LLM Adapter interface — the abstraction boundary
@@ -32,9 +37,6 @@ export interface ChatCompletionResponse {
 
 /**
  * Abstraction over the underlying LLM provider.
- *
- * When the real Copilot SDK ships, implement this interface by delegating
- * to `CopilotClient.chat.completions.create(...)`.
  */
 export interface LLMAdapter {
   chatCompletion(
@@ -46,6 +48,92 @@ export interface LLMAdapter {
    * Called when the per-user client is cleaned up.
    */
   dispose(): void;
+}
+
+// ---------------------------------------------------------------------------
+// Copilot SDK-based LLM Adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * LLM adapter backed by the @github/copilot-sdk.
+ *
+ * Each `chatCompletion` call creates a fresh session with the system message
+ * set via `replace` mode, then sends the last user message. For multi-turn
+ * conversations, prior assistant/user exchanges are included in the prompt
+ * context to maintain coherence.
+ */
+class CopilotLLMAdapter implements LLMAdapter {
+  private client: CopilotClient;
+  private started = false;
+
+  constructor(githubToken: string) {
+    this.client = new CopilotClient({
+      githubToken,
+      useLoggedInUser: false,
+    });
+  }
+
+  async chatCompletion(
+    options: ChatCompletionOptions,
+  ): Promise<ChatCompletionResponse> {
+    if (!this.started) {
+      await this.client.start();
+      this.started = true;
+    }
+
+    // Extract system message and build the user prompt
+    const systemMsg =
+      options.messages.find((m) => m.role === "system")?.content ?? "";
+
+    // Collect non-system messages; combine prior turns into context
+    const nonSystemMsgs = options.messages.filter((m) => m.role !== "system");
+    const lastUserMsg = nonSystemMsgs[nonSystemMsgs.length - 1];
+
+    // Build context from prior turns (if any) to include in the prompt
+    const priorTurns = nonSystemMsgs.slice(0, -1);
+    let prompt = "";
+    if (priorTurns.length > 0) {
+      const context = priorTurns
+        .map(
+          (m) =>
+            `<${m.role}>\n${m.content}\n</${m.role}>`,
+        )
+        .join("\n\n");
+      prompt = `Here is the prior conversation context:\n\n${context}\n\nNow, respond to the following:\n\n${lastUserMsg?.content ?? ""}`;
+    } else {
+      prompt = lastUserMsg?.content ?? "";
+    }
+
+    const session = await this.client.createSession({
+      model: options.model,
+      onPermissionRequest: approveAll,
+      systemMessage: {
+        mode: "replace",
+        content: systemMsg,
+      },
+      // Disable all built-in tools — we only need chat completion
+      availableTools: [],
+    });
+
+    try {
+      const response = await session.sendAndWait(
+        { prompt },
+        300_000, // 5 min timeout
+      );
+
+      const content = response?.data?.content ?? "[]";
+      return { content };
+    } finally {
+      await session.disconnect();
+    }
+  }
+
+  dispose(): void {
+    if (this.started) {
+      this.client.stop().catch(() => {});
+      this.started = false;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -68,9 +156,15 @@ export class CopilotSubscriptionError extends Error {
 
 /**
  * Factory function type that creates an `LLMAdapter` for a given user token.
- * This is what gets swapped out when the real SDK becomes available.
  */
 export type LLMAdapterFactory = (githubToken: string) => LLMAdapter;
+
+/**
+ * Default factory that creates a real Copilot SDK adapter.
+ */
+export const copilotAdapterFactory: LLMAdapterFactory = (
+  githubToken: string,
+) => new CopilotLLMAdapter(githubToken);
 
 export interface CopilotClientEntry {
   adapter: LLMAdapter;
@@ -93,8 +187,8 @@ export class CopilotClientManager {
   private readonly clients = new Map<string, CopilotClientEntry>();
   private readonly factory: LLMAdapterFactory;
 
-  constructor(factory: LLMAdapterFactory) {
-    this.factory = factory;
+  constructor(factory?: LLMAdapterFactory) {
+    this.factory = factory ?? copilotAdapterFactory;
   }
 
   /**
