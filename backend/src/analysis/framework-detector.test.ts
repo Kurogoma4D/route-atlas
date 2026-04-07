@@ -7,6 +7,7 @@ import {
   detectFlutterFramework,
   isIOSFramework,
   isFlutterFramework,
+  isReactNativeFramework,
   isExcludedPath,
   UnsupportedFrameworkError,
   type PackageJson,
@@ -814,6 +815,35 @@ describe("detectPlatform — Flutter", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Platform detection — React Native / Expo (package.json + native dirs)
+// ---------------------------------------------------------------------------
+describe("detectPlatform — React Native coexistence", () => {
+  it("returns 'web' when package.json coexists with android/app/build.gradle", () => {
+    expect(
+      detectPlatform(["package.json", "android/app/build.gradle", "src/App.tsx"]),
+    ).toBe("web");
+  });
+
+  it("returns 'web' when package.json coexists with ios/.xcodeproj", () => {
+    expect(
+      detectPlatform(["package.json", "ios/MyApp.xcodeproj/project.pbxproj", "src/App.tsx"]),
+    ).toBe("web");
+  });
+
+  it("returns 'android' for pure Android project without package.json", () => {
+    expect(
+      detectPlatform(["android/app/build.gradle", "build.gradle", "settings.gradle"]),
+    ).toBe("android");
+  });
+
+  it("returns 'ios' for pure iOS project without package.json", () => {
+    expect(
+      detectPlatform(["ios/MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"]),
+    ).toBe("ios");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Flutter framework detection
 // ---------------------------------------------------------------------------
 describe("detectFlutterFramework", () => {
@@ -930,6 +960,115 @@ describe("isFlutterFramework", () => {
 });
 
 // ---------------------------------------------------------------------------
+// React Native / Expo framework detection
+// ---------------------------------------------------------------------------
+describe("React Native / Expo detection", () => {
+  describe("Expo Router", () => {
+    it("detects expo-router when expo-router is in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "expo-router": "3.0.0", "react-native": "0.73.0", react: "18.0.0" }),
+      );
+      expect(result.framework).toBe("expo-router");
+      expect(result.routingFilePatterns).toContain("app/**/_layout.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain("app/**/index.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain("app/**/*.{tsx,jsx,ts,js}");
+    });
+
+    it("prefers expo-router over react-navigation when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "expo-router": "3.0.0",
+          "@react-navigation/native": "6.0.0",
+          "react-native": "0.73.0",
+        }),
+      );
+      expect(result.framework).toBe("expo-router");
+    });
+
+    it("prefers expo-router over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "expo-router": "3.0.0",
+          "react-router-dom": "6.0.0",
+          "react-native": "0.73.0",
+        }),
+      );
+      expect(result.framework).toBe("expo-router");
+    });
+  });
+
+  describe("React Navigation", () => {
+    it("detects react-navigation when @react-navigation/native is in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "@react-navigation/native": "6.0.0", "react-native": "0.73.0", react: "18.0.0" }),
+      );
+      expect(result.framework).toBe("react-navigation");
+      expect(result.routingFilePatterns).toContain("src/**/navigation/*.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain("src/**/*Navigator.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain("src/**/*Screen.{tsx,jsx,ts,js}");
+    });
+
+    it("prefers react-navigation over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "@react-navigation/native": "6.0.0",
+          "react-router-dom": "6.0.0",
+          "react-native": "0.73.0",
+        }),
+      );
+      expect(result.framework).toBe("react-navigation");
+    });
+  });
+
+  describe("react-native fallback", () => {
+    it("falls back to react-navigation when only react-native is in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "react-native": "0.73.0", react: "18.0.0" }),
+      );
+      expect(result.framework).toBe("react-navigation");
+      expect(result.routingFilePatterns).toContain("src/**/*Navigator.{tsx,jsx,ts,js}");
+    });
+
+    it("prefers react-native over react-router-dom", () => {
+      const result = detectFramework(
+        pkg({ "react-native": "0.73.0", "react-router-dom": "6.0.0", react: "18.0.0" }),
+      );
+      expect(result.framework).toBe("react-navigation");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isReactNativeFramework helper
+// ---------------------------------------------------------------------------
+describe("isReactNativeFramework", () => {
+  it("returns true for expo-router", () => {
+    expect(isReactNativeFramework("expo-router")).toBe(true);
+  });
+
+  it("returns true for react-navigation", () => {
+    expect(isReactNativeFramework("react-navigation")).toBe(true);
+  });
+
+  it("returns false for web frameworks", () => {
+    expect(isReactNativeFramework("nextjs-app")).toBe(false);
+    expect(isReactNativeFramework("react-router")).toBe(false);
+  });
+
+  it("returns false for android frameworks", () => {
+    expect(isReactNativeFramework("android-navigation")).toBe(false);
+  });
+
+  it("returns false for flutter frameworks", () => {
+    expect(isReactNativeFramework("flutter-go-router")).toBe(false);
+  });
+
+  it("returns false for ios frameworks", () => {
+    expect(isReactNativeFramework("ios-swiftui")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isExcludedPath shared helper
 // ---------------------------------------------------------------------------
 describe("isExcludedPath", () => {
@@ -943,6 +1082,18 @@ describe("isExcludedPath", () => {
 
   it("returns true for .fvm paths", () => {
     expect(isExcludedPath(".fvm/flutter_sdk/bin/dart")).toBe(true);
+  });
+
+  it("returns true for .expo paths", () => {
+    expect(isExcludedPath(".expo/types/router.d.ts")).toBe(true);
+  });
+
+  it("returns false for android/ paths (not globally excluded)", () => {
+    expect(isExcludedPath("android/app/build.gradle")).toBe(false);
+  });
+
+  it("returns false for ios/ paths (not globally excluded)", () => {
+    expect(isExcludedPath("ios/Podfile.lock")).toBe(false);
   });
 
   it("returns false for regular source paths", () => {

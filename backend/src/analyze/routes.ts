@@ -20,10 +20,14 @@ import {
   isAndroidFramework,
   isIOSFramework,
   isFlutterFramework,
+  isReactNativeFramework,
   isExcludedPath,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
-import { FLUTTER_EXCLUDED_FILE_PATTERNS } from "../analysis/constants.js";
+import {
+  FLUTTER_EXCLUDED_FILE_PATTERNS,
+  REACT_NATIVE_EXCLUDED_DIR_PREFIXES,
+} from "../analysis/constants.js";
 import {
   fetchFileTree,
   filterFilesByPatterns,
@@ -317,7 +321,12 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       );
       detectionResult = detectiOSFramework(iosFiles, allPaths);
     } else {
-      // Web projects: find and parse package.json
+      // Web projects (and React Native): find and parse package.json.
+      // React Native projects intentionally use this path because they share
+      // the same package.json-based detection logic as web projects — the
+      // RN framework rules (expo-router, @react-navigation/native,
+      // react-native) are checked first in FRAMEWORK_RULES so they take
+      // priority over web framework rules.
       const pkgEntry = allFiles.find((f) => f.path === "package.json");
 
       let packageJson: PackageJson = {};
@@ -389,11 +398,18 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         ...(framework === "plain-html" ? ["**/*.html"] : []),
       ];
     }
+    const isReactNativeProject = isReactNativeFramework(framework);
     const componentEntries = filterFilesByPatterns(
       allFiles,
       componentPatterns,
     ).filter((f) => {
       if (isExcludedPath(f.path)) return false;
+      // For React Native projects, additionally exclude android/, ios/, and
+      // .expo/ directories which contain platform host-app code, not
+      // user-authored components.
+      if (isReactNativeProject) {
+        if (REACT_NATIVE_EXCLUDED_DIR_PREFIXES.some((p) => f.path.startsWith(p))) return false;
+      }
       // For Flutter projects, exclude code-generated files (*.g.dart, *.freezed.dart)
       // but keep auto_route generated files (*.gr.dart) for flutter-auto-route only
       if (isFlutterProject) {

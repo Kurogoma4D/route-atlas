@@ -22,6 +22,8 @@
  * - Flutter go_router
  * - Flutter auto_route
  * - Flutter Navigator (imperative)
+ * - Expo Router (React Native)
+ * - React Navigation (React Native)
  */
 
 import yaml from "js-yaml";
@@ -43,7 +45,9 @@ export type FrameworkName =
   | "ios-uikit"
   | "flutter-go-router"
   | "flutter-auto-route"
-  | "flutter-navigator";
+  | "flutter-navigator"
+  | "expo-router"
+  | "react-navigation";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -99,6 +103,13 @@ export function isFlutterFramework(framework: string): boolean {
 }
 
 /**
+ * Returns true when the framework name refers to a React Native framework variant.
+ */
+export function isReactNativeFramework(framework: string): boolean {
+  return framework === "expo-router" || framework === "react-navigation";
+}
+
+/**
  * Returns true when the file path starts with any excluded directory prefix.
  */
 export function isExcludedPath(f: string): boolean {
@@ -121,6 +132,24 @@ export function isExcludedPath(f: string): boolean {
  * while still excluding paths under EXCLUDED_DIR_PREFIXES.
  */
 export function detectPlatform(fileTree: string[]): PlatformType {
+  // React Native / Expo detection — check EARLY, before Flutter, Android, and
+  // iOS checks. RN projects contain `android/` and/or `ios/` directories
+  // alongside a `package.json`. Native Android projects never have a
+  // package.json at root, and native iOS projects don't either, so the
+  // coexistence of package.json with these directories is a strong signal of
+  // a cross-platform JS framework (RN/Expo). Return "web" so that the
+  // package.json-based framework detection path runs.
+  const hasPackageJson = fileTree.some((f) => f === "package.json");
+  const hasAndroidDir = fileTree.some(
+    (f) => f === "android" || f.startsWith("android/"),
+  );
+  const hasIOSDir = fileTree.some(
+    (f) => f === "ios" || f.startsWith("ios/"),
+  );
+  if (hasPackageJson && (hasAndroidDir || hasIOSDir)) {
+    return "web";
+  }
+
   // Flutter detection — check for pubspec.yaml before Android because Flutter
   // projects often contain Gradle build files for Android host apps.
   // Require a secondary indicator (android/, ios/, or lib/main.dart) to
@@ -441,7 +470,48 @@ interface FrameworkRule {
   resolve: (fileTree: string[]) => FrameworkDetectionResult;
 }
 
+/**
+ * Shared routing file patterns for React Navigation (used by both the
+ * explicit `@react-navigation/native` rule and the `react-native` fallback).
+ */
+const REACT_NAVIGATION_PATTERNS: string[] = [
+  "src/**/navigation/*.{tsx,jsx,ts,js}",
+  "src/**/*Navigator.{tsx,jsx,ts,js}",
+  "src/**/*Screen.{tsx,jsx,ts,js}",
+];
+
 const FRAMEWORK_RULES: FrameworkRule[] = [
+  // React Native frameworks — checked before web frameworks because RN
+  // projects may also have react-router-dom or other web dependencies.
+  {
+    key: "expo-router",
+    resolve: () => ({
+      framework: "expo-router",
+      routingFilePatterns: [
+        "app/**/_layout.{tsx,jsx,ts,js}",
+        "app/**/index.{tsx,jsx,ts,js}",
+        // Expo Router convention: every file under app/ is a route (except
+        // _-prefixed files other than _layout). The catch-all is intentionally
+        // broad to match dynamic routes like [id].tsx and named routes.
+        "app/**/*.{tsx,jsx,ts,js}",
+      ],
+    }),
+  },
+  {
+    key: "@react-navigation/native",
+    resolve: () => ({
+      framework: "react-navigation",
+      routingFilePatterns: REACT_NAVIGATION_PATTERNS,
+    }),
+  },
+  {
+    key: "react-native",
+    resolve: () => ({
+      framework: "react-navigation",
+      routingFilePatterns: REACT_NAVIGATION_PATTERNS,
+    }),
+  },
+  // Web frameworks
   {
     key: "next",
     resolve: (fileTree) => resolveNextJs(fileTree),
