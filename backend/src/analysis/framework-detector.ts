@@ -33,7 +33,7 @@ export interface FrameworkDetectionResult {
 export class UnsupportedFrameworkError extends Error {
   constructor(message?: string) {
     super(
-      message ?? "No supported frontend framework detected in package.json",
+      message ?? "No supported frontend framework or HTML files detected",
     );
     this.name = "UnsupportedFrameworkError";
   }
@@ -197,7 +197,10 @@ export function detectFramework(
   }
 
   // Fallback: detect plain HTML sites when .html files exist in the tree
-  const hasHtmlFiles = fileTree.some((f) => f.endsWith(".html"));
+  const NON_SOURCE_PREFIXES = ["node_modules/", "dist/", "build/", ".next/", "out/"];
+  const hasHtmlFiles = fileTree.some(
+    (f) => f.endsWith(".html") && !NON_SOURCE_PREFIXES.some((p) => f.startsWith(p)),
+  );
   if (hasHtmlFiles) {
     return {
       framework: "plain-html",

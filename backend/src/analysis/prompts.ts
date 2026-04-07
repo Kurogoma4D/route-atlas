@@ -35,8 +35,8 @@ export function buildTurn1Prompt(
 
   const frameworkInstructions = isPlainHtml
     ? `Analyze the following plain HTML files. Each HTML file represents a screen.
-Use the file path as the URL route path (e.g. "/about.html", "/contact/index.html").
-Set "componentFile" to the same HTML file path.`
+Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
+Set "componentFile" to the same HTML file path (without the leading "/").`
     : `Analyze the following ${framework} routing files and extract every screen / route.`;
 
   return `${frameworkInstructions}

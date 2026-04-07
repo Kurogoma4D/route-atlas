@@ -297,6 +297,8 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       ".nuxt/",
       ".svelte-kit/",
       "vendor/",
+      "public/",
+      "static/",
     ];
     const componentPatterns = [
       "**/*.tsx",
@@ -305,7 +307,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       "**/*.js",
       "**/*.vue",
       "**/*.svelte",
-      "**/*.html",
+      ...(framework === "plain-html" ? ["**/*.html"] : []),
     ];
     const componentEntries = filterFilesByPatterns(
       allFiles,

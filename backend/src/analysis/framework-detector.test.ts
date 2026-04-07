@@ -178,7 +178,7 @@ describe("detectFramework", () => {
 
     it("error message is descriptive", () => {
       expect(() => detectFramework({})).toThrow(
-        "No supported frontend framework detected in package.json",
+        "No supported frontend framework or HTML files detected",
       );
     });
 
@@ -278,6 +278,18 @@ describe("detectFramework", () => {
         "public/index.html",
       ]);
       expect(result.framework).toBe("nextjs-app");
+    });
+
+    it("ignores .html files in non-source directories (node_modules, dist, etc.)", () => {
+      expect(() =>
+        detectFramework(pkg({ lodash: "4.0.0" }), [
+          "node_modules/some-lib/index.html",
+          "dist/index.html",
+          "build/index.html",
+          ".next/server/index.html",
+          "out/index.html",
+        ]),
+      ).toThrow(UnsupportedFrameworkError);
     });
 
     it("throws UnsupportedFrameworkError when no framework and no .html files", () => {
