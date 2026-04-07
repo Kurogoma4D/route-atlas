@@ -14,6 +14,8 @@
  * - SvelteKit
  */
 
+import { EXCLUDED_DIR_PREFIXES } from "./constants.js";
+
 export type FrameworkName =
   | "nextjs-app"
   | "nextjs-pages"
@@ -197,9 +199,8 @@ export function detectFramework(
   }
 
   // Fallback: detect plain HTML sites when .html files exist in the tree
-  const NON_SOURCE_PREFIXES = ["node_modules/", "dist/", "build/", ".next/", "out/"];
   const hasHtmlFiles = fileTree.some(
-    (f) => f.endsWith(".html") && !NON_SOURCE_PREFIXES.some((p) => f.startsWith(p)),
+    (f) => f.endsWith(".html") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
   );
   if (hasHtmlFiles) {
     return {

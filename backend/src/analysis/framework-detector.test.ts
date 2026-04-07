@@ -288,6 +288,11 @@ describe("detectFramework", () => {
           "build/index.html",
           ".next/server/index.html",
           "out/index.html",
+          ".nuxt/index.html",
+          ".svelte-kit/index.html",
+          "vendor/index.html",
+          "public/index.html",
+          "static/index.html",
         ]),
       ).toThrow(UnsupportedFrameworkError);
     });

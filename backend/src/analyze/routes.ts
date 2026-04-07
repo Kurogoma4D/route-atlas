@@ -26,6 +26,7 @@ import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "./job-manager.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
+import { EXCLUDED_DIR_PREFIXES } from "../analysis/constants.js";
 
 // ---------------------------------------------------------------------------
 // Request body shape
@@ -288,18 +289,6 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
     // Fetch component files (all .ts/.tsx/.js/.jsx/.vue/.svelte/.html files)
     // excluding common non-source directories
-    const EXCLUDED_DIR_PREFIXES = [
-      "node_modules/",
-      "dist/",
-      "build/",
-      ".next/",
-      "out/",
-      ".nuxt/",
-      ".svelte-kit/",
-      "vendor/",
-      "public/",
-      "static/",
-    ];
     const componentPatterns = [
       "**/*.tsx",
       "**/*.jsx",
