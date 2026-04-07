@@ -395,10 +395,9 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     ).filter((f) => {
       if (isExcludedPath(f.path)) return false;
       // For Flutter projects, exclude code-generated files (*.g.dart, *.freezed.dart)
-      // but keep auto_route generated files (*.gr.dart)
+      // but keep auto_route generated files (*.gr.dart) for flutter-auto-route only
       if (isFlutterProject) {
-        const isAutoRouteGen = f.path.endsWith(".gr.dart");
-        if (isAutoRouteGen) return true;
+        if (framework === "flutter-auto-route" && f.path.endsWith(".gr.dart")) return true;
         if (FLUTTER_EXCLUDED_FILE_PATTERNS.some((re) => re.test(f.path))) return false;
       }
       return true;

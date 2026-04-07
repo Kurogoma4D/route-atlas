@@ -123,8 +123,16 @@ export function isExcludedPath(f: string): boolean {
 export function detectPlatform(fileTree: string[]): PlatformType {
   // Flutter detection — check for pubspec.yaml before Android because Flutter
   // projects often contain Gradle build files for Android host apps.
+  // Require a secondary indicator (android/, ios/, or lib/main.dart) to
+  // distinguish Flutter from pure Dart server projects (dart_frog, shelf).
   const hasPubspec = fileTree.some((f) => f === "pubspec.yaml");
-  if (hasPubspec) {
+  const hasFlutterIndicator = fileTree.some(
+    (f) =>
+      f === "android" || f.startsWith("android/") ||
+      f === "ios" || f.startsWith("ios/") ||
+      f === "lib/main.dart",
+  );
+  if (hasPubspec && hasFlutterIndicator) {
     return "flutter";
   }
 
@@ -342,7 +350,6 @@ const FLUTTER_GO_ROUTER_PATTERNS = [
   "lib/**/router.dart",
   "lib/**/routes.dart",
   "lib/**/*_router.dart",
-  "lib/**/*.dart",
 ];
 
 /**
@@ -351,7 +358,6 @@ const FLUTTER_GO_ROUTER_PATTERNS = [
 const FLUTTER_AUTO_ROUTE_PATTERNS = [
   "lib/**/*_router.dart",
   "lib/**/*_router.gr.dart",
-  "lib/**/*.dart",
 ];
 
 /**
@@ -382,7 +388,7 @@ export function detectFlutterFramework(
 ): FrameworkDetectionResult {
   let pubspec: PubspecYaml;
   try {
-    pubspec = (yaml.load(pubspecContent) as PubspecYaml) ?? {};
+    pubspec = (yaml.load(pubspecContent, { schema: yaml.JSON_SCHEMA }) as PubspecYaml) ?? {};
   } catch {
     // If YAML parsing fails, fall back to Navigator
     return {

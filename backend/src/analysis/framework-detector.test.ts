@@ -770,8 +770,20 @@ describe("detectiOSFramework", () => {
 // Platform detection — Flutter
 // ---------------------------------------------------------------------------
 describe("detectPlatform — Flutter", () => {
-  it("returns 'flutter' when pubspec.yaml exists at root", () => {
+  it("returns 'flutter' when pubspec.yaml and lib/main.dart exist", () => {
     expect(detectPlatform(["pubspec.yaml", "lib/main.dart"])).toBe("flutter");
+  });
+
+  it("returns 'flutter' when pubspec.yaml and android/ dir exist", () => {
+    expect(detectPlatform(["pubspec.yaml", "android/build.gradle"])).toBe("flutter");
+  });
+
+  it("returns 'flutter' when pubspec.yaml and ios/ dir exist", () => {
+    expect(detectPlatform(["pubspec.yaml", "ios/Runner.xcodeproj/project.pbxproj"])).toBe("flutter");
+  });
+
+  it("returns 'web' when pubspec.yaml exists without Flutter indicators (pure Dart)", () => {
+    expect(detectPlatform(["pubspec.yaml", "bin/server.dart"])).toBe("web");
   });
 
   it("prefers flutter over android when both pubspec.yaml and build.gradle exist", () => {
@@ -818,6 +830,7 @@ dependencies:
     expect(result.routingFilePatterns).toContain("lib/**/router.dart");
     expect(result.routingFilePatterns).toContain("lib/**/routes.dart");
     expect(result.routingFilePatterns).toContain("lib/**/*_router.dart");
+    expect(result.routingFilePatterns).not.toContain("lib/**/*.dart");
   });
 
   it("detects flutter-auto-route when auto_route is in dependencies", () => {
@@ -834,6 +847,7 @@ dev_dependencies:
     expect(result.framework).toBe("flutter-auto-route");
     expect(result.routingFilePatterns).toContain("lib/**/*_router.dart");
     expect(result.routingFilePatterns).toContain("lib/**/*_router.gr.dart");
+    expect(result.routingFilePatterns).not.toContain("lib/**/*.dart");
   });
 
   it("falls back to flutter-navigator when no routing package is found", () => {
@@ -925,6 +939,10 @@ describe("isExcludedPath", () => {
 
   it("returns true for Pods paths", () => {
     expect(isExcludedPath("Pods/SomeLib/Main.storyboard")).toBe(true);
+  });
+
+  it("returns true for .fvm paths", () => {
+    expect(isExcludedPath(".fvm/flutter_sdk/bin/dart")).toBe(true);
   });
 
   it("returns false for regular source paths", () => {

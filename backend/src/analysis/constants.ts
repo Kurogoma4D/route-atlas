@@ -22,6 +22,7 @@ export const EXCLUDED_DIR_PREFIXES = [
   "Carthage/",
   ".build/",
   ".dart_tool/",
+  ".fvm/",
 ];
 
 /**

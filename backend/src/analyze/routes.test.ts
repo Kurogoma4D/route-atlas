@@ -34,7 +34,7 @@ vi.mock("../analysis/framework-detector.js", async () => {
     })),
     detectFlutterFramework: vi.fn(() => ({
       framework: "flutter-go-router",
-      routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*_router.dart", "lib/**/*.dart"],
+      routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*_router.dart"],
     })),
   };
 });
@@ -510,7 +510,7 @@ describe("Analysis API routes", () => {
       detectPlatformMock.mockReturnValueOnce("flutter");
       detectFlutterFrameworkMock.mockReturnValueOnce({
         framework: "flutter-go-router",
-        routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*.dart"],
+        routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*_router.dart"],
       });
 
       const agent = request.agent(app);
