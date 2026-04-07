@@ -24,6 +24,8 @@ export const EXCLUDED_DIR_PREFIXES = [
   ".dart_tool/",
   ".fvm/",
   ".expo/",
+  ".cache/",
+  ".gatsby/",
 ];
 
 /**

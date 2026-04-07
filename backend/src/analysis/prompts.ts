@@ -89,6 +89,18 @@ For Flutter projects, identify screens from:
 Use the route path string as the "path" (e.g. "/home", "/user/:id").
 For Navigator 1.0 named routes, use the route name (e.g. "/settings").
 Set "componentFile" to the .dart file path containing the screen widget.`;
+  } else if (framework === "gatsby") {
+    frameworkInstructions =
+      `Analyze the following Gatsby page files and extract every screen / route.
+
+For Gatsby projects (file-based routing similar to Next.js Pages Router):
+- Each file under src/pages/ represents a route. The file path maps to the URL route (e.g. src/pages/index.tsx -> /, src/pages/about.tsx -> /about, src/pages/blog/index.tsx -> /blog).
+- Dynamic routes use curly brace notation: src/pages/{slug}.tsx -> /:slug, src/pages/users/{id}.tsx -> /users/:id.
+- Files named index.tsx represent the default route for their directory.
+- gatsby-node.js createPages API can generate additional dynamic pages — infer these from the source if visible.
+
+Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
+Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (isPlainHtml) {
     frameworkInstructions =
       `Analyze the following plain HTML files. Each HTML file represents a screen.
@@ -305,6 +317,13 @@ export function buildTurn3Prompt(
 - coordinator.navigate(to:) (Coordinator pattern)
 - TabView tab switching
 - dismiss(), navigationController?.popViewController() (back navigation)`;
+  } else if (framework === "gatsby") {
+    lookForItems = `- <Link to="..."> from "gatsby" package
+- navigate() from "gatsby" package
+- navigate() from "@reach/router"
+- <a href="..."> for external links
+- window.location / location.href assignments
+- Form submit handlers that navigate`;
   } else {
     lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
@@ -323,7 +342,9 @@ export function buildTurn3Prompt(
         ? `"NavController.navigate", "startActivity", "popBackStack"`
         : isIOS
           ? `"NavigationLink", "pushViewController", "sheet"`
-          : `"Link", "router.push", "window.location"`;
+          : framework === "gatsby"
+            ? `"Link to", "navigate", "window.location"`
+            : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 
