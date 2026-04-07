@@ -10,3 +10,7 @@
 name = "route-atlas"
 compatibility_date = "2024-09-23"
 pages_build_output_dir = "frontend/dist/frontend/browser"
+
+[[services]]
+binding = "BACKEND"
+service = "route-atlas-api"
