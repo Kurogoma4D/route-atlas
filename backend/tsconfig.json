@@ -12,6 +12,7 @@
     "declaration": true,
     "sourceMap": true,
     "resolveJsonModule": true,
+    "types": ["@cloudflare/workers-types"],
     "paths": {
       "@route-atlas/shared": ["../shared/dist/index.d.ts"]
     }

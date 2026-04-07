@@ -197,8 +197,8 @@ export function createAuthRouter(): Hono {
   });
 
   // POST /api/auth/logout - Destroy session
-  router.post("/logout", (c) => {
-    destroySession(c);
+  router.post("/logout", async (c) => {
+    await destroySession(c);
     return c.json({ message: "Logged out" });
   });
 

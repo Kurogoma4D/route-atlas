@@ -5,3 +5,8 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 NODE_ENV = "production"
+
+# KV namespace for session storage
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "PLACEHOLDER_KV_NAMESPACE_ID"

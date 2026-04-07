@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createApp } from "../server.js";
 import { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "../analyze/job-manager.js";
+import { resetInMemoryKV } from "./session.js";
 import type { Hono } from "hono";
 
 // Mock fetch globally
@@ -74,6 +75,7 @@ describe("Auth routes", () => {
   });
 
   afterEach(() => {
+    resetInMemoryKV();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });

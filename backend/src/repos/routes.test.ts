@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createApp } from "../server.js";
+import { resetInMemoryKV } from "../auth/session.js";
 import type { Hono } from "hono";
 
 // Mock fetch globally
@@ -131,6 +132,7 @@ describe("Repos routes", () => {
   });
 
   afterEach(() => {
+    resetInMemoryKV();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
