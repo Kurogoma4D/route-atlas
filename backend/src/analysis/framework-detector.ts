@@ -132,6 +132,24 @@ export function isExcludedPath(f: string): boolean {
  * while still excluding paths under EXCLUDED_DIR_PREFIXES.
  */
 export function detectPlatform(fileTree: string[]): PlatformType {
+  // React Native / Expo detection — check EARLY, before Flutter, Android, and
+  // iOS checks. RN projects contain `android/` and/or `ios/` directories
+  // alongside a `package.json`. Native Android projects never have a
+  // package.json at root, and native iOS projects don't either, so the
+  // coexistence of package.json with these directories is a strong signal of
+  // a cross-platform JS framework (RN/Expo). Return "web" so that the
+  // package.json-based framework detection path runs.
+  const hasPackageJson = fileTree.some((f) => f === "package.json");
+  const hasAndroidDir = fileTree.some(
+    (f) => f === "android" || f.startsWith("android/"),
+  );
+  const hasIOSDir = fileTree.some(
+    (f) => f === "ios" || f.startsWith("ios/"),
+  );
+  if (hasPackageJson && (hasAndroidDir || hasIOSDir)) {
+    return "web";
+  }
+
   // Flutter detection — check for pubspec.yaml before Android because Flutter
   // projects often contain Gradle build files for Android host apps.
   // Require a secondary indicator (android/, ios/, or lib/main.dart) to

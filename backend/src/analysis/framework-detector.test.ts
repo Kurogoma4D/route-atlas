@@ -815,6 +815,35 @@ describe("detectPlatform — Flutter", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Platform detection — React Native / Expo (package.json + native dirs)
+// ---------------------------------------------------------------------------
+describe("detectPlatform — React Native coexistence", () => {
+  it("returns 'web' when package.json coexists with android/app/build.gradle", () => {
+    expect(
+      detectPlatform(["package.json", "android/app/build.gradle", "src/App.tsx"]),
+    ).toBe("web");
+  });
+
+  it("returns 'web' when package.json coexists with ios/.xcodeproj", () => {
+    expect(
+      detectPlatform(["package.json", "ios/MyApp.xcodeproj/project.pbxproj", "src/App.tsx"]),
+    ).toBe("web");
+  });
+
+  it("returns 'android' for pure Android project without package.json", () => {
+    expect(
+      detectPlatform(["android/app/build.gradle", "build.gradle", "settings.gradle"]),
+    ).toBe("android");
+  });
+
+  it("returns 'ios' for pure iOS project without package.json", () => {
+    expect(
+      detectPlatform(["ios/MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"]),
+    ).toBe("ios");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Flutter framework detection
 // ---------------------------------------------------------------------------
 describe("detectFlutterFramework", () => {

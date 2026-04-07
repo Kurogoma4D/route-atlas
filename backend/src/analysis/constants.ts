@@ -36,7 +36,6 @@ export const EXCLUDED_DIR_PREFIXES = [
 export const REACT_NATIVE_EXCLUDED_DIR_PREFIXES = [
   "android/",
   "ios/",
-  ".expo/",
 ];
 
 /**
