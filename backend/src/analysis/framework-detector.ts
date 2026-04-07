@@ -1,8 +1,8 @@
 /**
  * Framework Detection Engine
  *
- * Detects the project platform (web / android / ios) and then the specific
- * framework or navigation library in use. Returns the corresponding
+ * Detects the project platform (web / android / ios / flutter) and then the
+ * specific framework or navigation library in use. Returns the corresponding
  * routing file patterns so the analysis pipeline knows which files to
  * feed to the LLM.
  *
@@ -19,8 +19,12 @@
  * - Android Compose Navigation
  * - iOS SwiftUI
  * - iOS UIKit
+ * - Flutter go_router
+ * - Flutter auto_route
+ * - Flutter Navigator (imperative)
  */
 
+import yaml from "js-yaml";
 import { EXCLUDED_DIR_PREFIXES } from "./constants.js";
 
 export type FrameworkName =
@@ -36,7 +40,10 @@ export type FrameworkName =
   | "android-navigation"
   | "android-compose-navigation"
   | "ios-swiftui"
-  | "ios-uikit";
+  | "ios-uikit"
+  | "flutter-go-router"
+  | "flutter-auto-route"
+  | "flutter-navigator";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -60,7 +67,7 @@ export interface PackageJson {
 /**
  * The platform type determined by project structure files.
  */
-export type PlatformType = "web" | "android" | "ios";
+export type PlatformType = "web" | "android" | "ios" | "flutter";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -78,6 +85,17 @@ export function isAndroidFramework(framework: string): boolean {
  */
 export function isIOSFramework(framework: string): boolean {
   return framework === "ios-swiftui" || framework === "ios-uikit";
+}
+
+/**
+ * Returns true when the framework name refers to a Flutter framework variant.
+ */
+export function isFlutterFramework(framework: string): boolean {
+  return (
+    framework === "flutter-go-router" ||
+    framework === "flutter-auto-route" ||
+    framework === "flutter-navigator"
+  );
 }
 
 /**
@@ -103,6 +121,21 @@ export function isExcludedPath(f: string): boolean {
  * while still excluding paths under EXCLUDED_DIR_PREFIXES.
  */
 export function detectPlatform(fileTree: string[]): PlatformType {
+  // Flutter detection — check for pubspec.yaml before Android because Flutter
+  // projects often contain Gradle build files for Android host apps.
+  // Require a secondary indicator (android/, ios/, or lib/main.dart) to
+  // distinguish Flutter from pure Dart server projects (dart_frog, shelf).
+  const hasPubspec = fileTree.some((f) => f === "pubspec.yaml");
+  const hasFlutterIndicator = fileTree.some(
+    (f) =>
+      f === "android" || f.startsWith("android/") ||
+      f === "ios" || f.startsWith("ios/") ||
+      f === "lib/main.dart",
+  );
+  if (hasPubspec && hasFlutterIndicator) {
+    return "flutter";
+  }
+
   const rootIndicators = [
     "build.gradle",
     "build.gradle.kts",
@@ -303,6 +336,91 @@ export function detectiOSFramework(
   return {
     framework: "ios-swiftui",
     routingFilePatterns: IOS_SWIFTUI_PATTERNS,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Flutter framework detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Routing file patterns for Flutter go_router projects.
+ */
+const FLUTTER_GO_ROUTER_PATTERNS = [
+  "lib/**/router.dart",
+  "lib/**/routes.dart",
+  "lib/**/*_router.dart",
+];
+
+/**
+ * Routing file patterns for Flutter auto_route projects.
+ */
+const FLUTTER_AUTO_ROUTE_PATTERNS = [
+  "lib/**/*_router.dart",
+  "lib/**/*_router.gr.dart",
+];
+
+/**
+ * Routing file patterns for Flutter Navigator (imperative) projects.
+ */
+const FLUTTER_NAVIGATOR_PATTERNS = [
+  "lib/**/main.dart",
+  "lib/**/app.dart",
+  "lib/**/*.dart",
+];
+
+/**
+ * Minimal representation of the pubspec.yaml dependencies section.
+ */
+export interface PubspecYaml {
+  dependencies?: Record<string, unknown>;
+  dev_dependencies?: Record<string, unknown>;
+}
+
+/**
+ * Detect the Flutter routing framework from the contents of pubspec.yaml.
+ *
+ * @param pubspecContent - The raw YAML string of pubspec.yaml.
+ * @returns The detected Flutter framework and its routing file patterns.
+ */
+export function detectFlutterFramework(
+  pubspecContent: string,
+): FrameworkDetectionResult {
+  let pubspec: PubspecYaml;
+  try {
+    pubspec = (yaml.load(pubspecContent, { schema: yaml.JSON_SCHEMA }) as PubspecYaml) ?? {};
+  } catch {
+    // If YAML parsing fails, fall back to Navigator
+    return {
+      framework: "flutter-navigator",
+      routingFilePatterns: FLUTTER_NAVIGATOR_PATTERNS,
+    };
+  }
+
+  const deps = pubspec.dependencies ?? {};
+  const devDeps = pubspec.dev_dependencies ?? {};
+  const allDepKeys = new Set([...Object.keys(deps), ...Object.keys(devDeps)]);
+
+  // Check for go_router first (most popular)
+  if (allDepKeys.has("go_router")) {
+    return {
+      framework: "flutter-go-router",
+      routingFilePatterns: FLUTTER_GO_ROUTER_PATTERNS,
+    };
+  }
+
+  // Check for auto_route
+  if (allDepKeys.has("auto_route")) {
+    return {
+      framework: "flutter-auto-route",
+      routingFilePatterns: FLUTTER_AUTO_ROUTE_PATTERNS,
+    };
+  }
+
+  // Fallback: Flutter Navigator (imperative)
+  return {
+    framework: "flutter-navigator",
+    routingFilePatterns: FLUTTER_NAVIGATOR_PATTERNS,
   };
 }
 

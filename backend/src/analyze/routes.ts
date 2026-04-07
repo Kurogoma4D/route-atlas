@@ -16,11 +16,14 @@ import {
   detectPlatform,
   detectAndroidFramework,
   detectiOSFramework,
+  detectFlutterFramework,
   isAndroidFramework,
   isIOSFramework,
+  isFlutterFramework,
   isExcludedPath,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
+import { FLUTTER_EXCLUDED_FILE_PATTERNS } from "../analysis/constants.js";
 import {
   fetchFileTree,
   filterFilesByPatterns,
@@ -266,6 +269,25 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         { ref: branch },
       );
       detectionResult = detectAndroidFramework(gradleFiles);
+    } else if (platform === "flutter") {
+      // For Flutter projects, fetch pubspec.yaml to detect the routing library
+      const pubspecEntry = allFiles.find((f) => f.path === "pubspec.yaml");
+      if (pubspecEntry) {
+        const pubspecContents = await fetchFileContents(
+          owner,
+          repo,
+          [pubspecEntry],
+          token,
+          { ref: branch },
+        );
+        if (pubspecContents[0]) {
+          detectionResult = detectFlutterFramework(pubspecContents[0].content);
+        } else {
+          detectionResult = detectFlutterFramework("");
+        }
+      } else {
+        detectionResult = detectFlutterFramework("");
+      }
     } else if (platform === "ios") {
       // For iOS projects, fetch Swift/ObjC source files to detect SwiftUI vs UIKit
       const iosSourcePatterns = ["**/*.swift", "**/*.m", "**/*.h"];
@@ -346,10 +368,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     // Fetch component files — file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
     const isIOSProject = isIOSFramework(framework);
+    const isFlutterProject = isFlutterFramework(framework);
 
     let componentPatterns: string[];
 
-    if (isAndroidProject) {
+    if (isFlutterProject) {
+      componentPatterns = ["lib/**/*.dart"];
+    } else if (isAndroidProject) {
       componentPatterns = ["**/*.kt", "**/*.java", "**/*.xml"];
     } else if (isIOSProject) {
       componentPatterns = ["**/*.swift", "**/*.m", "**/*.h", "**/*.storyboard"];
@@ -367,9 +392,16 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const componentEntries = filterFilesByPatterns(
       allFiles,
       componentPatterns,
-    ).filter(
-      (f) => !isExcludedPath(f.path),
-    );
+    ).filter((f) => {
+      if (isExcludedPath(f.path)) return false;
+      // For Flutter projects, exclude code-generated files (*.g.dart, *.freezed.dart)
+      // but keep auto_route generated files (*.gr.dart) for flutter-auto-route only
+      if (isFlutterProject) {
+        if (framework === "flutter-auto-route" && f.path.endsWith(".gr.dart")) return true;
+        if (FLUTTER_EXCLUDED_FILE_PATTERNS.some((re) => re.test(f.path))) return false;
+      }
+      return true;
+    });
     const componentFiles = await fetchFileContents(
       owner,
       repo,

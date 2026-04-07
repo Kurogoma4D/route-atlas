@@ -9,7 +9,7 @@
  */
 
 import type { FrameworkName } from "./framework-detector.js";
-import { isAndroidFramework, isIOSFramework } from "./framework-detector.js";
+import { isAndroidFramework, isIOSFramework, isFlutterFramework } from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
@@ -37,10 +37,30 @@ export function buildTurn1Prompt(
   const isPlainHtml = framework === "plain-html";
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
+  const isFlutter = isFlutterFramework(framework);
 
   let frameworkInstructions: string;
 
-  if (isPlainHtml) {
+  if (isFlutter) {
+    const flutterLibLabel =
+      framework === "flutter-go-router"
+        ? "go_router (GoRoute / ShellRoute / StatefulShellRoute)"
+        : framework === "flutter-auto-route"
+          ? "auto_route (@RoutePage() annotations, AutoRouter definitions)"
+          : "Navigator 1.0 (MaterialApp routes / onGenerateRoute)";
+
+    frameworkInstructions =
+      `Analyze the following Flutter ${flutterLibLabel} files and extract every screen / route.
+
+For Flutter projects, identify screens from:
+- go_router: GoRoute(path: '...', builder: ...) and ShellRoute / StatefulShellRoute definitions
+- auto_route: @RoutePage() annotated widgets and AutoRouter / AppRouter route lists
+- Navigator 1.0: MaterialApp "routes" map entries and onGenerateRoute handler
+
+Use the route path string as the "path" (e.g. "/home", "/user/:id").
+For Navigator 1.0 named routes, use the route name (e.g. "/settings").
+Set "componentFile" to the .dart file path containing the screen widget.`;
+  } else if (isPlainHtml) {
     frameworkInstructions =
       `Analyze the following plain HTML files. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
@@ -75,13 +95,15 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
       `Analyze the following ${framework} routing files and extract every screen / route.`;
   }
 
-  const exampleComponentFile = isPlainHtml
-    ? "index.html"
-    : isAndroid
-      ? "app/src/main/java/com/example/HomeFragment.kt"
-      : isIOS
-        ? "Sources/Views/HomeView.swift"
-        : "app/page.tsx";
+  const exampleComponentFile = isFlutter
+    ? "lib/screens/home_screen.dart"
+    : isPlainHtml
+      ? "index.html"
+      : isAndroid
+        ? "app/src/main/java/com/example/HomeFragment.kt"
+        : isIOS
+          ? "Sources/Views/HomeView.swift"
+          : "app/page.tsx";
 
   return `${frameworkInstructions}
 
@@ -118,10 +140,23 @@ export function buildTurn2Prompt(
 ): string {
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
+  const isFlutter = isFlutterFramework(framework);
 
   let lookForItems: string;
 
-  if (isAndroid) {
+  if (isFlutter) {
+    lookForItems = `- Loading states (CircularProgressIndicator, LinearProgressIndicator, Shimmer / skeleton widgets)
+- Error states (error message widgets, SnackBar errors, AlertDialog for errors)
+- Empty states (no-data messages, empty list placeholders)
+- FutureBuilder / StreamBuilder with ConnectionState branching (waiting, active, done, error)
+- BlocBuilder / BlocConsumer state branching (BLoC pattern)
+- Consumer / Selector state branching (Riverpod / Provider)
+- AsyncValue.when() pattern (Riverpod)
+- Authentication-required states (login redirects, auth guards)
+- Permission-based rendering (role checks)
+- LayoutBuilder / MediaQuery responsive variants
+- Other conditional rendering (feature flags, platform checks)`;
+  } else if (isAndroid) {
     lookForItems = `- Loading states (ProgressBar, CircularProgressIndicator, LinearProgressIndicator, shimmer/skeleton composables)
 - Error states (Snackbar, Toast, AlertDialog for errors, try-catch blocks with error UI)
 - Empty states (no-data messages, empty list placeholders, EmptyView)
@@ -184,10 +219,20 @@ export function buildTurn3Prompt(
 
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
+  const isFlutter = isFlutterFramework(framework);
 
   let lookForItems: string;
 
-  if (isAndroid) {
+  if (isFlutter) {
+    lookForItems = `- Navigator.push(), Navigator.pushNamed(), Navigator.pushReplacement(), Navigator.pushReplacementNamed()
+- Navigator.pop(), Navigator.popUntil(), Navigator.popAndPushNamed()
+- Navigator.of(context).push(), Navigator.of(context).pushNamed()
+- context.go(), context.push(), context.goNamed(), context.pushNamed() (go_router)
+- GoRouter.of(context).go(), GoRouter.of(context).push()
+- context.router.push(), context.router.pushRoute(), context.router.pop() (auto_route)
+- showDialog(), showModalBottomSheet(), showCupertinoDialog(), showCupertinoModalPopup()
+- showGeneralDialog(), showBottomSheet()`;
+  } else if (isAndroid) {
     lookForItems = `- NavController.navigate(), findNavController().navigate()
 - navController.navigate("route") (Compose Navigation)
 - startActivity(Intent(...)), startActivityForResult()
@@ -215,11 +260,13 @@ export function buildTurn3Prompt(
 - Form submit handlers that navigate`;
   }
 
-  const methodExamples = isAndroid
-    ? `"NavController.navigate", "startActivity", "popBackStack"`
-    : isIOS
-      ? `"NavigationLink", "pushViewController", "sheet"`
-      : `"Link", "router.push", "window.location"`;
+  const methodExamples = isFlutter
+    ? `"Navigator.push", "context.go", "context.router.push", "showDialog"`
+    : isAndroid
+      ? `"NavController.navigate", "startActivity", "popBackStack"`
+      : isIOS
+        ? `"NavigationLink", "pushViewController", "sheet"`
+        : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 

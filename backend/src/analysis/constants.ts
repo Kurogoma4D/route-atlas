@@ -21,4 +21,16 @@ export const EXCLUDED_DIR_PREFIXES = [
   "Pods/",
   "Carthage/",
   ".build/",
+  ".dart_tool/",
+  ".fvm/",
+];
+
+/**
+ * File name patterns that should be excluded from Flutter project analysis.
+ * Code-generated files are generally noise, except for auto_route's `*.gr.dart`
+ * which contains route definitions.
+ */
+export const FLUTTER_EXCLUDED_FILE_PATTERNS = [
+  /\.g\.dart$/,
+  /\.freezed\.dart$/,
 ];
