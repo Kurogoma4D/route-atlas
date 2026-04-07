@@ -9,7 +9,7 @@
  */
 
 import type { FrameworkName } from "./framework-detector.js";
-import { isAndroidFramework, isIOSFramework, isFlutterFramework } from "./framework-detector.js";
+import { isAndroidFramework, isIOSFramework, isFlutterFramework, isReactNativeFramework } from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
@@ -38,10 +38,39 @@ export function buildTurn1Prompt(
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
   const isFlutter = isFlutterFramework(framework);
+  const isReactNative = isReactNativeFramework(framework);
 
   let frameworkInstructions: string;
 
-  if (isFlutter) {
+  if (isReactNative) {
+    if (framework === "expo-router") {
+      frameworkInstructions =
+        `Analyze the following Expo Router files and extract every screen / route.
+
+For Expo Router projects (file-based routing similar to Next.js App Router):
+- Each file under app/ represents a route. The file path maps to the URL route (e.g. app/(tabs)/home.tsx -> /home, app/profile/[id].tsx -> /profile/[id]).
+- _layout.tsx files define navigation structure using <Tabs>, <Stack>, or <Drawer> components.
+- (group) directories (parenthesized names) are route groups — they do NOT appear in the URL path but organize navigation structure.
+- [param] and [...catchAll] represent dynamic route segments.
+- Files named index.tsx represent the default route for their directory.
+
+Use the file-based route path as the "path" (e.g. "/", "/home", "/profile/[id]").
+Set "componentFile" to the .tsx/.jsx file path.`;
+    } else {
+      frameworkInstructions =
+        `Analyze the following React Navigation files and extract every screen / route.
+
+For React Navigation projects (v5+):
+- createStackNavigator(), createNativeStackNavigator() define stack-based navigation.
+- createBottomTabNavigator() defines tab navigation.
+- createDrawerNavigator() defines drawer navigation.
+- Extract screens from <Stack.Screen name="..." component={...} />, <Tab.Screen>, <Drawer.Screen> elements.
+- Nested navigators define hierarchical navigation structure.
+
+Use the screen name as the "path" (e.g. "Home", "Profile", "Settings").
+Set "componentFile" to the .tsx/.jsx file path containing the screen component.`;
+    }
+  } else if (isFlutter) {
     const flutterLibLabel =
       framework === "flutter-go-router"
         ? "go_router (GoRoute / ShellRoute / StatefulShellRoute)"
@@ -95,15 +124,19 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
       `Analyze the following ${framework} routing files and extract every screen / route.`;
   }
 
-  const exampleComponentFile = isFlutter
-    ? "lib/screens/home_screen.dart"
-    : isPlainHtml
-      ? "index.html"
-      : isAndroid
-        ? "app/src/main/java/com/example/HomeFragment.kt"
-        : isIOS
-          ? "Sources/Views/HomeView.swift"
-          : "app/page.tsx";
+  const exampleComponentFile = isReactNative
+    ? (framework === "expo-router"
+        ? "app/(tabs)/home.tsx"
+        : "src/screens/HomeScreen.tsx")
+    : isFlutter
+      ? "lib/screens/home_screen.dart"
+      : isPlainHtml
+        ? "index.html"
+        : isAndroid
+          ? "app/src/main/java/com/example/HomeFragment.kt"
+          : isIOS
+            ? "Sources/Views/HomeView.swift"
+            : "app/page.tsx";
 
   return `${frameworkInstructions}
 
@@ -141,10 +174,21 @@ export function buildTurn2Prompt(
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
   const isFlutter = isFlutterFramework(framework);
+  const isReactNative = isReactNativeFramework(framework);
 
   let lookForItems: string;
 
-  if (isFlutter) {
+  if (isReactNative) {
+    lookForItems = `- Loading states (ActivityIndicator, skeleton/shimmer components)
+- Error states (error message views, Alert.alert for errors, error boundaries)
+- Empty states (FlatList / SectionList ListEmptyComponent, no-data messages)
+- Platform-specific rendering (Platform.OS, Platform.select())
+- Responsive variants (useWindowDimensions(), Dimensions API)
+- React Query / SWR / Apollo loading/error/data states
+- Authentication-required states (login redirects, auth guards)
+- Permission-based rendering (role checks)
+- Other conditional rendering (feature flags, A/B tests)`;
+  } else if (isFlutter) {
     lookForItems = `- Loading states (CircularProgressIndicator, LinearProgressIndicator, Shimmer / skeleton widgets)
 - Error states (error message widgets, SnackBar errors, AlertDialog for errors)
 - Empty states (no-data messages, empty list placeholders)
@@ -220,10 +264,21 @@ export function buildTurn3Prompt(
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
   const isFlutter = isFlutterFramework(framework);
+  const isReactNative = isReactNativeFramework(framework);
 
   let lookForItems: string;
 
-  if (isFlutter) {
+  if (isReactNative) {
+    lookForItems = `- navigation.navigate('ScreenName'), navigation.push('ScreenName')
+- navigation.goBack(), navigation.popToTop()
+- navigation.replace('ScreenName')
+- router.push(), router.replace() (Expo Router)
+- <Link href="..."> (Expo Router)
+- CommonActions.navigate(), StackActions.push()
+- Deep Link configuration (linking config)
+- navigation.reset() (stack reset)
+- navigation.dispatch() with custom actions`;
+  } else if (isFlutter) {
     lookForItems = `- Navigator.push(), Navigator.pushNamed(), Navigator.pushReplacement(), Navigator.pushReplacementNamed()
 - Navigator.pop(), Navigator.popUntil(), Navigator.popAndPushNamed()
 - Navigator.of(context).push(), Navigator.of(context).pushNamed()
@@ -260,13 +315,15 @@ export function buildTurn3Prompt(
 - Form submit handlers that navigate`;
   }
 
-  const methodExamples = isFlutter
-    ? `"Navigator.push", "context.go", "context.router.push", "showDialog"`
-    : isAndroid
-      ? `"NavController.navigate", "startActivity", "popBackStack"`
-      : isIOS
-        ? `"NavigationLink", "pushViewController", "sheet"`
-        : `"Link", "router.push", "window.location"`;
+  const methodExamples = isReactNative
+    ? `"navigation.navigate", "navigation.push", "router.push", "Link"`
+    : isFlutter
+      ? `"Navigator.push", "context.go", "context.router.push", "showDialog"`
+      : isAndroid
+        ? `"NavController.navigate", "startActivity", "popBackStack"`
+        : isIOS
+          ? `"NavigationLink", "pushViewController", "sheet"`
+          : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 

@@ -22,6 +22,8 @@
  * - Flutter go_router
  * - Flutter auto_route
  * - Flutter Navigator (imperative)
+ * - Expo Router (React Native)
+ * - React Navigation (React Native)
  */
 
 import yaml from "js-yaml";
@@ -43,7 +45,9 @@ export type FrameworkName =
   | "ios-uikit"
   | "flutter-go-router"
   | "flutter-auto-route"
-  | "flutter-navigator";
+  | "flutter-navigator"
+  | "expo-router"
+  | "react-navigation";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -96,6 +100,13 @@ export function isFlutterFramework(framework: string): boolean {
     framework === "flutter-auto-route" ||
     framework === "flutter-navigator"
   );
+}
+
+/**
+ * Returns true when the framework name refers to a React Native framework variant.
+ */
+export function isReactNativeFramework(framework: string): boolean {
+  return framework === "expo-router" || framework === "react-navigation";
 }
 
 /**
@@ -442,6 +453,41 @@ interface FrameworkRule {
 }
 
 const FRAMEWORK_RULES: FrameworkRule[] = [
+  // React Native frameworks — checked before web frameworks because RN
+  // projects may also have react-router-dom or other web dependencies.
+  {
+    key: "expo-router",
+    resolve: () => ({
+      framework: "expo-router",
+      routingFilePatterns: [
+        "app/**/_layout.{tsx,jsx,ts,js}",
+        "app/**/*.{tsx,jsx,ts,js}",
+      ],
+    }),
+  },
+  {
+    key: "@react-navigation/native",
+    resolve: () => ({
+      framework: "react-navigation",
+      routingFilePatterns: [
+        "src/**/navigation/*.{tsx,jsx,ts,js}",
+        "src/**/*Navigator.{tsx,jsx,ts,js}",
+        "src/**/*Screen.{tsx,jsx,ts,js}",
+      ],
+    }),
+  },
+  {
+    key: "react-native",
+    resolve: () => ({
+      framework: "react-navigation",
+      routingFilePatterns: [
+        "src/**/navigation/*.{tsx,jsx,ts,js}",
+        "src/**/*Navigator.{tsx,jsx,ts,js}",
+        "src/**/*Screen.{tsx,jsx,ts,js}",
+      ],
+    }),
+  },
+  // Web frameworks
   {
     key: "next",
     resolve: (fileTree) => resolveNextJs(fileTree),

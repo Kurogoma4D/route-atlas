@@ -23,6 +23,9 @@ export const EXCLUDED_DIR_PREFIXES = [
   ".build/",
   ".dart_tool/",
   ".fvm/",
+  ".expo/",
+  "android/",
+  "ios/",
 ];
 
 /**
