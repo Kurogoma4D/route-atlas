@@ -28,6 +28,10 @@ vi.mock("../analysis/framework-detector.js", async () => {
       framework: "android-navigation",
       routingFilePatterns: ["**/res/navigation/*.xml"],
     })),
+    detectiOSFramework: vi.fn(() => ({
+      framework: "ios-swiftui",
+      routingFilePatterns: ["**/*View.swift", "**/*App.swift"],
+    })),
   };
 });
 
@@ -490,6 +494,38 @@ describe("Analysis API routes", () => {
       // still return valid LLM responses, it should succeed.
       expect(job!.status).toBe("complete");
       expect(detectAndroidFrameworkMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("iOS platform pipeline", () => {
+    it("exercises the iOS branch when detectPlatform returns 'ios'", async () => {
+      const frameworkMod = await import("../analysis/framework-detector.js");
+      const detectPlatformMock = vi.mocked(frameworkMod.detectPlatform);
+      const detectiOSFrameworkMock = vi.mocked(frameworkMod.detectiOSFramework);
+
+      detectPlatformMock.mockReturnValueOnce("ios");
+      detectiOSFrameworkMock.mockReturnValueOnce({
+        framework: "ios-swiftui",
+        routingFilePatterns: ["**/*View.swift", "**/*App.swift"],
+      });
+
+      const agent = request.agent(app);
+      await authenticateAgent(agent);
+
+      const postRes = await agent
+        .post("/api/analyze")
+        .send({ owner: "foo", repo: "bar", branch: "main" });
+
+      expect(postRes.status).toBe(202);
+      const { jobId } = postRes.body;
+
+      // Wait for background pipeline
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const job = jobManager.getJob(jobId);
+      expect(job).toBeDefined();
+      expect(job!.status).toBe("complete");
+      expect(detectiOSFrameworkMock).toHaveBeenCalled();
     });
   });
 

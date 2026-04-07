@@ -18,4 +18,7 @@ export const EXCLUDED_DIR_PREFIXES = [
   "static/",
   ".gradle/",
   "app/build/",
+  "Pods/",
+  "Carthage/",
+  ".build/",
 ];

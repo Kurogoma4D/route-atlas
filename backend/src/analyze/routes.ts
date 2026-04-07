@@ -15,7 +15,9 @@ import {
   detectFramework,
   detectPlatform,
   detectAndroidFramework,
+  detectiOSFramework,
   isAndroidFramework,
+  isIOSFramework,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
 import {
@@ -264,6 +266,22 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         { ref: branch },
       );
       detectionResult = detectAndroidFramework(gradleFiles);
+    } else if (platform === "ios") {
+      // For iOS projects, fetch Swift source files to detect SwiftUI vs UIKit
+      const swiftPatterns = ["**/*.swift"];
+      const swiftEntries = filterFilesByPatterns(allFiles, swiftPatterns)
+        .filter(
+          (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+        )
+        .slice(0, 50); // Limit to 50 files for framework detection
+      const swiftFiles = await fetchFileContents(
+        owner,
+        repo,
+        swiftEntries,
+        token,
+        { ref: branch },
+      );
+      detectionResult = detectiOSFramework(swiftFiles, allPaths);
     } else {
       // Web projects: find and parse package.json
       const pkgEntry = allFiles.find((f) => f.path === "package.json");
@@ -315,18 +333,25 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
     // Fetch component files — file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
+    const isIOSProject = isIOSFramework(framework);
 
-    const componentPatterns = isAndroidProject
-      ? ["**/*.kt", "**/*.java", "**/*.xml"]
-      : [
-          "**/*.tsx",
-          "**/*.jsx",
-          "**/*.ts",
-          "**/*.js",
-          "**/*.vue",
-          "**/*.svelte",
-          ...(framework === "plain-html" ? ["**/*.html"] : []),
-        ];
+    let componentPatterns: string[];
+
+    if (isAndroidProject) {
+      componentPatterns = ["**/*.kt", "**/*.java", "**/*.xml"];
+    } else if (isIOSProject) {
+      componentPatterns = ["**/*.swift", "**/*.m", "**/*.h", "**/*.storyboard"];
+    } else {
+      componentPatterns = [
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.ts",
+        "**/*.js",
+        "**/*.vue",
+        "**/*.svelte",
+        ...(framework === "plain-html" ? ["**/*.html"] : []),
+      ];
+    }
     const componentEntries = filterFilesByPatterns(
       allFiles,
       componentPatterns,
