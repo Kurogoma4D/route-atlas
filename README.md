@@ -10,14 +10,14 @@ GitHub リポジトリの Web フロントエンドコードを解析し、画�
 
 ## 技術スタック
 
-| レイヤー | 技術 |
-|---|---|
+| レイヤー       | 技術                                                  |
+| -------------- | ----------------------------------------------------- |
 | フロントエンド | Angular 19+ (standalone components), Angular Material |
-| グラフ描画 | Cytoscape.js |
-| バックエンド | Node.js (Express) |
-| LLM 解析 | GitHub Copilot SDK (`@github/copilot-sdk`) |
-| 認証 | GitHub OAuth App |
-| デプロイ | Docker |
+| グラフ描画     | Cytoscape.js                                          |
+| バックエンド   | Hono (Cloudflare Workers)                             |
+| LLM 解析       | GitHub Copilot SDK (`@github/copilot-sdk`)            |
+| 認証           | GitHub OAuth App                                      |
+| デプロイ       | Cloudflare Pages (frontend) + Workers (backend)       |
 
 ## セットアップ
 
@@ -31,6 +31,31 @@ pnpm dev
 # ビルド
 pnpm build
 ```
+
+## デプロイ
+
+本プロジェクトは Cloudflare にデプロイされます。GitHub Actions による自動デプロイが設定されており、`main` ブランチへの push 時に自動でデプロイされます。
+
+- **フロントエンド**: Cloudflare Pages (`deploy-frontend.yml`)
+- **バックエンド**: Cloudflare Workers (`deploy-backend.yml`)
+
+### 必要な GitHub Secrets
+
+| シークレット名          | 説明                                                 |
+| ----------------------- | ---------------------------------------------------- |
+| `CLOUDFLARE_API_TOKEN`  | Cloudflare API トークン (Pages/Workers デプロイ権限) |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare アカウント ID                             |
+
+### Cloudflare 側の環境変数 (Workers)
+
+| 変数名                 | 説明                                        |
+| ---------------------- | ------------------------------------------- |
+| `GITHUB_CLIENT_ID`     | GitHub OAuth App のクライアント ID          |
+| `GITHUB_CLIENT_SECRET` | GitHub OAuth App のクライアントシークレット |
+| `SESSION_SECRET`       | セッション暗号化キー (強力なランダム文字列) |
+| `OAUTH_CALLBACK_URL`   | OAuth コールバック URL                      |
+
+これらは `wrangler secret put <変数名>` コマンドまたは Cloudflare ダッシュボードから設定してください。
 
 ## Claude Code エージェント
 
