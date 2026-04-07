@@ -594,8 +594,7 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     key: "react-router",
     resolve: (fileTree) => {
       const hasFrameworkConfig = fileTree.some(
-        (f) =>
-          f === "react-router.config.ts" || f === "react-router.config.js",
+        (f) => f === "react-router.config.ts" || f === "react-router.config.js",
       );
       if (hasFrameworkConfig) {
         return {

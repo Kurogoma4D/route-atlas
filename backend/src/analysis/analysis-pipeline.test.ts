@@ -294,9 +294,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("throws when LLM returns non-JSON content", async () => {
-    const badAdapter = createMockAdapter([
-      "This is not JSON at all, sorry!",
-    ]);
+    const badAdapter = createMockAdapter(["This is not JSON at all, sorry!"]);
     const badPipeline = new AnalysisPipeline(badAdapter);
 
     await expect(
@@ -309,9 +307,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("throws when LLM returns valid JSON but wrong shape (object instead of array)", async () => {
-    const badAdapter = createMockAdapter([
-      JSON.stringify({ not: "an array" }),
-    ]);
+    const badAdapter = createMockAdapter([JSON.stringify({ not: "an array" })]);
     const badPipeline = new AnalysisPipeline(badAdapter);
 
     await expect(

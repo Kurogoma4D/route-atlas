@@ -239,7 +239,11 @@ export class AnalysisPipeline {
       path: s.path,
     }));
 
-    const turn3Prompt = buildTurn3Prompt(screenSummary, input.componentFiles, input.framework);
+    const turn3Prompt = buildTurn3Prompt(
+      screenSummary,
+      input.componentFiles,
+      input.framework,
+    );
     conversationHistory.push({ role: "user", content: turn3Prompt });
 
     const turn3Response = await this.adapter.chatCompletion({

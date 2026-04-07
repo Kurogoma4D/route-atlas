@@ -8,12 +8,20 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { Response } from "express";
 import type { AnalysisResult } from "@route-atlas/shared";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
+
+/**
+ * A minimal writer interface for SSE connections.
+ * This replaces the Express `Response` type to be framework-agnostic.
+ */
+export interface SSEWriter {
+  write(chunk: string): boolean | void;
+  end(): void;
+}
 
 export type JobStatus = "pending" | "running" | "complete" | "error";
 
@@ -28,7 +36,7 @@ export interface AnalysisJob {
   status: JobStatus;
   result: AnalysisResult | null;
   error: string | null;
-  sseConnections: Set<Response>;
+  sseConnections: Set<SSEWriter>;
   createdAt: number;
 }
 
@@ -111,20 +119,20 @@ export class JobManager {
   /**
    * Add an SSE connection to a job.
    */
-  addConnection(jobId: string, res: Response): void {
+  addConnection(jobId: string, writer: SSEWriter): void {
     const job = this.jobs.get(jobId);
     if (job) {
-      job.sseConnections.add(res);
+      job.sseConnections.add(writer);
     }
   }
 
   /**
    * Remove an SSE connection from a job.
    */
-  removeConnection(jobId: string, res: Response): void {
+  removeConnection(jobId: string, writer: SSEWriter): void {
     const job = this.jobs.get(jobId);
     if (job) {
-      job.sseConnections.delete(res);
+      job.sseConnections.delete(writer);
     }
   }
 
@@ -138,8 +146,8 @@ export class JobManager {
     job.status = "running";
     const data = JSON.stringify(event);
 
-    for (const res of job.sseConnections) {
-      res.write(`event: progress\ndata: ${data}\n\n`);
+    for (const writer of job.sseConnections) {
+      writer.write(`event: progress\ndata: ${data}\n\n`);
     }
   }
 
@@ -154,9 +162,9 @@ export class JobManager {
     job.result = result;
     const data = JSON.stringify(result);
 
-    for (const res of job.sseConnections) {
-      res.write(`event: complete\ndata: ${data}\n\n`);
-      res.end();
+    for (const writer of job.sseConnections) {
+      writer.write(`event: complete\ndata: ${data}\n\n`);
+      writer.end();
     }
     job.sseConnections.clear();
   }
@@ -172,9 +180,9 @@ export class JobManager {
     job.error = message;
     const data = JSON.stringify({ message });
 
-    for (const res of job.sseConnections) {
-      res.write(`event: error\ndata: ${data}\n\n`);
-      res.end();
+    for (const writer of job.sseConnections) {
+      writer.write(`event: error\ndata: ${data}\n\n`);
+      writer.end();
     }
     job.sseConnections.clear();
   }
@@ -191,8 +199,8 @@ export class JobManager {
     const job = this.jobs.get(jobId);
     if (job) {
       // Close any remaining SSE connections
-      for (const res of job.sseConnections) {
-        res.end();
+      for (const writer of job.sseConnections) {
+        writer.end();
       }
       job.sseConnections.clear();
     }
@@ -211,8 +219,8 @@ export class JobManager {
     }
     this.cleanupTimers.clear();
     for (const job of this.jobs.values()) {
-      for (const res of job.sseConnections) {
-        res.end();
+      for (const writer of job.sseConnections) {
+        writer.end();
       }
       job.sseConnections.clear();
     }

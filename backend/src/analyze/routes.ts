@@ -8,8 +8,8 @@
  * Reference: SPEC.md §6.1, §6.2, §6.3
  */
 
-import { Router } from "express";
-import type { Request, Response } from "express";
+import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { decrypt } from "../auth/crypto.js";
 import {
   detectFramework,
@@ -42,6 +42,7 @@ import {
 import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "./job-manager.js";
+import type { SSEWriter } from "./job-manager.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
 
 // ---------------------------------------------------------------------------
@@ -64,21 +65,34 @@ export interface AnalyzeRouterDeps {
   jobManager?: JobManager;
 }
 
-export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
-  const router = Router();
+export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
+  const router = new Hono();
   const jobManager = deps.jobManager ?? new JobManager();
 
   // POST /api/analyze — Start analysis job
-  router.post("/", (req: Request, res: Response) => {
-    const body = req.body as AnalyzeRequestBody;
+  router.post("/", async (c) => {
+    let body: AnalyzeRequestBody;
+    try {
+      body = (await c.req.json()) as AnalyzeRequestBody;
+    } catch {
+      return c.json(
+        {
+          error: "invalid_json",
+          message: "Request body must be valid JSON",
+        },
+        400,
+      );
+    }
 
     // Validate required fields
     if (!body.owner || !body.repo || !body.branch) {
-      res.status(400).json({
-        error: "validation_error",
-        message: "owner, repo, and branch are required",
-      });
-      return;
+      return c.json(
+        {
+          error: "validation_error",
+          message: "owner, repo, and branch are required",
+        },
+        400,
+      );
     }
 
     // Validate model if provided
@@ -87,20 +101,20 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
         ? (body.model as SupportedModel)
         : DEFAULT_MODEL;
 
-    const userId = req.session.user!.login;
+    const session = c.get("session");
+    const userId = session.user!.login;
     const jobId = jobManager.createJob(userId);
 
     if (jobId === null) {
-      res.status(429).json({
-        error: "too_many_jobs",
-        message:
-          "Too many active analysis jobs. Please wait for existing jobs to complete.",
-      });
-      return;
+      return c.json(
+        {
+          error: "too_many_jobs",
+          message:
+            "Too many active analysis jobs. Please wait for existing jobs to complete.",
+        },
+        429,
+      );
     }
-
-    // Return jobId immediately
-    res.status(202).json({ jobId });
 
     // Run the pipeline in the background
     runPipeline({
@@ -110,7 +124,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
       repo: body.repo,
       branch: body.branch,
       model,
-      encryptedToken: req.session.encryptedToken!,
+      encryptedToken: session.encryptedToken!,
       jobManager,
       clientManager: deps.clientManager,
     }).catch((err) => {
@@ -119,95 +133,136 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Router {
         err,
       );
     });
+
+    // Return jobId immediately
+    return c.json({ jobId }, 202);
   });
 
   // GET /api/analyze/:jobId/result — Retrieve completed analysis result
-  router.get("/:jobId/result", (req: Request, res: Response) => {
-    const jobId = req.params["jobId"] as string;
+  router.get("/:jobId/result", (c) => {
+    const jobId = c.req.param("jobId");
     const job = jobManager.getJob(jobId);
 
     if (!job) {
-      res.status(404).json({
-        error: "not_found",
-        message: "Job not found",
-      });
-      return;
+      return c.json(
+        {
+          error: "not_found",
+          message: "Job not found",
+        },
+        404,
+      );
     }
 
     // Verify ownership
-    const userId = req.session.user!.login;
+    const session = c.get("session");
+    const userId = session.user!.login;
     if (job.userId !== userId) {
-      res.status(403).json({
-        error: "forbidden",
-        message: "Access denied",
-      });
-      return;
+      return c.json(
+        {
+          error: "forbidden",
+          message: "Access denied",
+        },
+        403,
+      );
     }
 
     if (job.status !== "complete" || !job.result) {
-      res.status(409).json({
-        error: "not_ready",
-        message: `Job is not complete (status: ${job.status})`,
-      });
-      return;
+      return c.json(
+        {
+          error: "not_ready",
+          message: `Job is not complete (status: ${job.status})`,
+        },
+        409,
+      );
     }
 
-    res.json(job.result);
+    return c.json(job.result);
   });
 
   // GET /api/analyze/:jobId — SSE stream
-  router.get("/:jobId", (req: Request, res: Response) => {
-    const jobId = req.params["jobId"] as string;
+  router.get("/:jobId", (c) => {
+    const jobId = c.req.param("jobId");
     const job = jobManager.getJob(jobId);
 
     if (!job) {
-      res.status(404).json({
-        error: "not_found",
-        message: "Job not found",
-      });
-      return;
+      return c.json(
+        {
+          error: "not_found",
+          message: "Job not found",
+        },
+        404,
+      );
     }
 
     // Verify ownership
-    const userId = req.session.user!.login;
+    const session = c.get("session");
+    const userId = session.user!.login;
     if (job.userId !== userId) {
-      res.status(403).json({
-        error: "forbidden",
-        message: "Access denied",
-      });
-      return;
+      return c.json(
+        {
+          error: "forbidden",
+          message: "Access denied",
+        },
+        403,
+      );
     }
-
-    // Set SSE headers
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-    res.flushHeaders();
 
     // If job already completed, send the result immediately
     if (job.status === "complete" && job.result) {
-      res.write(`event: complete\ndata: ${JSON.stringify(job.result)}\n\n`);
-      res.end();
-      return;
+      return streamSSE(c, async (stream) => {
+        await stream.writeSSE({
+          event: "complete",
+          data: JSON.stringify(job.result),
+        });
+      });
     }
 
     // If job already errored, send the error immediately
     if (job.status === "error" && job.error) {
-      res.write(
-        `event: error\ndata: ${JSON.stringify({ message: job.error })}\n\n`,
-      );
-      res.end();
-      return;
+      return streamSSE(c, async (stream) => {
+        await stream.writeSSE({
+          event: "error",
+          data: JSON.stringify({ message: job.error }),
+        });
+      });
     }
 
-    // Register the SSE connection
-    jobManager.addConnection(jobId, res);
+    // Register the SSE connection using the raw response writer
+    return streamSSE(c, async (stream) => {
+      // Create a response-like object for the job manager
+      const sseWriter: SSEWriter = {
+        write: (chunk: string) => {
+          // Parse the SSE format and re-emit via stream
+          stream.write(chunk);
+          return true;
+        },
+        end: () => {
+          stream.close();
+        },
+      };
 
-    // Clean up on client disconnect
-    req.on("close", () => {
-      jobManager.removeConnection(jobId, res);
+      jobManager.addConnection(jobId, sseWriter);
+
+      // Wait for the stream to be aborted (client disconnect or job complete)
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => {
+          jobManager.removeConnection(jobId, sseWriter);
+          resolve();
+        });
+
+        // Also resolve when job completes (connection will be closed by jobManager)
+        const checkInterval = setInterval(() => {
+          const currentJob = jobManager.getJob(jobId);
+          if (
+            !currentJob ||
+            currentJob.status === "complete" ||
+            currentJob.status === "error"
+          ) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+      });
     });
   });
 
@@ -263,9 +318,10 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     if (platform === "android") {
       // For Android projects, fetch Gradle build files to detect the navigation library
       const gradlePatterns = ["**/build.gradle", "**/build.gradle.kts"];
-      const gradleEntries = filterFilesByPatterns(allFiles, gradlePatterns).filter(
-        (f) => !isExcludedPath(f.path),
-      );
+      const gradleEntries = filterFilesByPatterns(
+        allFiles,
+        gradlePatterns,
+      ).filter((f) => !isExcludedPath(f.path));
       const gradleFiles = await fetchFileContents(
         owner,
         repo,
@@ -296,14 +352,20 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     } else if (platform === "ios") {
       // For iOS projects, fetch Swift/ObjC source files to detect SwiftUI vs UIKit
       const iosSourcePatterns = ["**/*.swift", "**/*.m", "**/*.h"];
-      const iosEntries = filterFilesByPatterns(allFiles, iosSourcePatterns)
-        .filter(
-          (f) => !isExcludedPath(f.path),
-        );
+      const iosEntries = filterFilesByPatterns(
+        allFiles,
+        iosSourcePatterns,
+      ).filter((f) => !isExcludedPath(f.path));
 
       // Prioritize files likely to contain UI imports so we don't miss
       // framework signals when slicing to 50 files.
-      const uiNamePatterns = ["View", "ViewController", "App", "Scene", "Controller"];
+      const uiNamePatterns = [
+        "View",
+        "ViewController",
+        "App",
+        "Scene",
+        "Controller",
+      ];
       const prioritized = iosEntries.sort((a, b) => {
         const aHasUI = uiNamePatterns.some((p) => a.path.includes(p));
         const bHasUI = uiNamePatterns.some((p) => b.path.includes(p));
@@ -313,21 +375,12 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       });
 
       const iosSliced = prioritized.slice(0, 50);
-      const iosFiles = await fetchFileContents(
-        owner,
-        repo,
-        iosSliced,
-        token,
-        { ref: branch },
-      );
+      const iosFiles = await fetchFileContents(owner, repo, iosSliced, token, {
+        ref: branch,
+      });
       detectionResult = detectiOSFramework(iosFiles, allPaths);
     } else {
       // Web projects (and React Native): find and parse package.json.
-      // React Native projects intentionally use this path because they share
-      // the same package.json-based detection logic as web projects — the
-      // RN framework rules (expo-router, @react-navigation/native,
-      // react-native) are checked first in FRAMEWORK_RULES so they take
-      // priority over web framework rules.
       const pkgEntry = allFiles.find((f) => f.path === "package.json");
 
       let packageJson: PackageJson = {};
@@ -408,17 +461,17 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       componentPatterns,
     ).filter((f) => {
       if (isExcludedPath(f.path)) return false;
-      // For React Native projects, additionally exclude android/, ios/, and
-      // .expo/ directories which contain platform host-app code, not
-      // user-authored components.
       if (isReactNativeProject) {
-        if (REACT_NATIVE_EXCLUDED_DIR_PREFIXES.some((p) => f.path.startsWith(p))) return false;
+        if (
+          REACT_NATIVE_EXCLUDED_DIR_PREFIXES.some((p) => f.path.startsWith(p))
+        )
+          return false;
       }
-      // For Flutter projects, exclude code-generated files (*.g.dart, *.freezed.dart)
-      // but keep auto_route generated files (*.gr.dart) for flutter-auto-route only
       if (isFlutterProject) {
-        if (framework === "flutter-auto-route" && f.path.endsWith(".gr.dart")) return true;
-        if (FLUTTER_EXCLUDED_FILE_PATTERNS.some((re) => re.test(f.path))) return false;
+        if (framework === "flutter-auto-route" && f.path.endsWith(".gr.dart"))
+          return true;
+        if (FLUTTER_EXCLUDED_FILE_PATTERNS.some((re) => re.test(f.path)))
+          return false;
       }
       return true;
     });

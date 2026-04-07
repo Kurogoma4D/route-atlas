@@ -1,0 +1,7 @@
+name = "route-atlas-api"
+main = "src/main.ts"
+compatibility_date = "2024-12-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+NODE_ENV = "production"

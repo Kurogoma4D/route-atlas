@@ -8,10 +8,7 @@
  * Reference: SPEC.md §4.2, §8.2
  */
 
-import {
-  CopilotClient,
-  approveAll,
-} from "@github/copilot-sdk";
+import { CopilotClient, approveAll } from "@github/copilot-sdk";
 
 // ---------------------------------------------------------------------------
 // LLM Adapter interface — the abstraction boundary
@@ -94,10 +91,7 @@ class CopilotLLMAdapter implements LLMAdapter {
     let prompt = "";
     if (priorTurns.length > 0) {
       const context = priorTurns
-        .map(
-          (m) =>
-            `<${m.role}>\n${m.content}\n</${m.role}>`,
-        )
+        .map((m) => `<${m.role}>\n${m.content}\n</${m.role}>`)
         .join("\n\n");
       prompt = `Here is the prior conversation context:\n\n${context}\n\nNow, respond to the following:\n\n${lastUserMsg?.content ?? ""}`;
     } else {
@@ -162,9 +156,8 @@ export type LLMAdapterFactory = (githubToken: string) => LLMAdapter;
 /**
  * Default factory that creates a real Copilot SDK adapter.
  */
-export const copilotAdapterFactory: LLMAdapterFactory = (
-  githubToken: string,
-) => new CopilotLLMAdapter(githubToken);
+export const copilotAdapterFactory: LLMAdapterFactory = (githubToken: string) =>
+  new CopilotLLMAdapter(githubToken);
 
 export interface CopilotClientEntry {
   adapter: LLMAdapter;

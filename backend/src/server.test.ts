@@ -1,12 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import request from "supertest";
 import { createApp } from "./server.js";
 import { CopilotClientManager } from "./analysis/copilot-client.js";
 import { JobManager } from "./analyze/job-manager.js";
-import type { Express } from "express";
+import type { Hono } from "hono";
 
-describe("Express endpoints", () => {
-  let app: Express;
+describe("Hono endpoints", () => {
+  let app: Hono;
 
   beforeEach(() => {
     vi.stubEnv("SESSION_SECRET", "test-secret");
@@ -23,14 +22,16 @@ describe("Express endpoints", () => {
   });
 
   it("GET /api/health returns 200 with status ok", async () => {
-    const res = await request(app).get("/api/health");
+    const res = await app.request("/api/health");
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("status", "ok");
+    const body = await res.json();
+    expect(body).toHaveProperty("status", "ok");
   });
 
   it("POST /api/analyze returns 401 when not authenticated", async () => {
-    const res = await request(app).post("/api/analyze");
+    const res = await app.request("/api/analyze", { method: "POST" });
     expect(res.status).toBe(401);
-    expect(res.body).toHaveProperty("error", "unauthorized");
+    const body = await res.json();
+    expect(body).toHaveProperty("error", "unauthorized");
   });
 });
