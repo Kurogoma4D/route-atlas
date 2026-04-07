@@ -69,6 +69,7 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
 
   readonly loading = signal(true);
   readonly errorMessage = signal<string | null>(null);
+  readonly emptyResult = signal(false);
   readonly selectedNode = signal<SelectedNodeData | null>(null);
   readonly filterPanelOpen = signal(false);
 
@@ -137,8 +138,12 @@ export class GraphComponent implements OnInit, AfterViewInit, OnDestroy {
         next: (result) => {
           this.analysisResult = result;
           this.loading.set(false);
-          // Schedule Cytoscape init on next microtask so the container is rendered
-          queueMicrotask(() => this.initCytoscape(result));
+          if (result.screens.length === 0) {
+            this.emptyResult.set(true);
+            return;
+          }
+          // Schedule Cytoscape init after Angular renders the container
+          setTimeout(() => this.initCytoscape(result), 0);
         },
         error: (err) => {
           const message =

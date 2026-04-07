@@ -1,5 +1,5 @@
 # ---- Stage 1: Install dependencies ----
-FROM node:20-slim AS deps
+FROM node:22-slim AS deps
 
 WORKDIR /app
 
@@ -34,12 +34,15 @@ COPY backend/ backend/
 RUN npm run build -w backend
 
 # ---- Stage 5: Production image ----
-FROM node:20-slim AS production
+FROM node:22-slim AS production
 
 WORKDIR /app
 
-# Create non-root user
-RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
+# Install CA certificates (required by Copilot CLI for HTTPS)
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user with a home directory (required by Copilot CLI for config)
+RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /home/appuser appuser
 
 # Copy root workspace files
 COPY package.json package-lock.json ./

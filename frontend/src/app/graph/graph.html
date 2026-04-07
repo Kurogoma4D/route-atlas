@@ -31,11 +31,22 @@
     </button>
   </div>
   <div class="graph-content">
+    @if (emptyResult()) {
+    <div class="empty-result-container">
+      <mat-icon class="empty-icon">info</mat-icon>
+      <p class="empty-message">ルートが見つかりませんでした。ルーティング定義が空か、対応していないフレームワークの可能性があります。</p>
+      <button mat-flat-button (click)="goBack()">
+        <mat-icon>arrow_back</mat-icon>
+        戻る
+      </button>
+    </div>
+    } @else {
     <div #cyContainer class="cy-container"></div>
     @if (selectedNode()) {
     <app-detail-panel [node]="selectedNode()!" (closed)="closeDetailPanel()" />
     } @if (filterPanelOpen()) {
     <app-filter-panel [cy]="cyInstance()" (closed)="toggleFilterPanel()" />
+    }
     }
   </div>
   }
