@@ -21,6 +21,7 @@ import {
   isIOSFramework,
   isFlutterFramework,
   isReactNativeFramework,
+  isAstroFramework,
   isExcludedPath,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
@@ -396,6 +397,9 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         "**/*.vue",
         "**/*.svelte",
         ...(framework === "plain-html" ? ["**/*.html"] : []),
+        ...(isAstroFramework(framework)
+          ? ["**/*.astro", "**/*.md", "**/*.mdx"]
+          : []),
       ];
     }
     const isReactNativeProject = isReactNativeFramework(framework);
