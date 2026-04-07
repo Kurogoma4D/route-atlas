@@ -59,6 +59,17 @@ export interface PackageJson {
 export type PlatformType = "web" | "android";
 
 // ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the framework name refers to an Android navigation variant.
+ */
+export function isAndroidFramework(framework: string): boolean {
+  return framework === "android-navigation" || framework === "android-compose-navigation";
+}
+
+// ---------------------------------------------------------------------------
 // Platform detection
 // ---------------------------------------------------------------------------
 
@@ -68,21 +79,30 @@ export type PlatformType = "web" | "android";
  * - If any Gradle build files or AndroidManifest.xml are found, the project
  *   is classified as "android".
  * - Otherwise, it falls back to "web".
+ *
+ * Gradle files are matched at the root level as well as in subdirectories
+ * (e.g. `app/build.gradle.kts`) to support multi-module Android projects,
+ * while still excluding paths under EXCLUDED_DIR_PREFIXES.
  */
 export function detectPlatform(fileTree: string[]): PlatformType {
-  const androidIndicators = [
+  const rootIndicators = [
     "build.gradle",
     "build.gradle.kts",
     "settings.gradle",
     "settings.gradle.kts",
   ];
 
-  const hasGradleRoot = fileTree.some((f) => androidIndicators.includes(f));
+  const hasGradleRoot = fileTree.some((f) => rootIndicators.includes(f));
+  const hasGradleAnywhere = fileTree.some(
+    (f) =>
+      (f.endsWith("/build.gradle") || f.endsWith("/build.gradle.kts")) &&
+      !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+  );
   const hasManifest = fileTree.some(
     (f) => f.endsWith("AndroidManifest.xml") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
   );
 
-  if (hasGradleRoot || hasManifest) {
+  if (hasGradleRoot || hasGradleAnywhere || hasManifest) {
     return "android";
   }
 
@@ -142,9 +162,8 @@ export function detectAndroidFramework(
     };
   }
 
-  // Check for standard Navigation Component
-  if (allContent.includes("androidx.navigation") ||
-      allContent.includes("navigation-fragment") ||
+  // Check for standard Navigation Component (XML-based)
+  if (allContent.includes("navigation-fragment") ||
       allContent.includes("navigation-ui")) {
     return {
       framework: "android-navigation",

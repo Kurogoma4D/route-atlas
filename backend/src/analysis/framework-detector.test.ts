@@ -3,6 +3,7 @@ import {
   detectFramework,
   detectPlatform,
   detectAndroidFramework,
+  isAndroidFramework,
   UnsupportedFrameworkError,
   type PackageJson,
 } from "./framework-detector.js";
@@ -343,6 +344,18 @@ describe("detectPlatform", () => {
 
   it("returns 'web' for empty file tree", () => {
     expect(detectPlatform([])).toBe("web");
+  });
+
+  it("returns 'android' when build.gradle exists only in a subdirectory (multi-module)", () => {
+    expect(detectPlatform(["app/build.gradle", "README.md"])).toBe("android");
+  });
+
+  it("returns 'android' when build.gradle.kts exists only in a subdirectory", () => {
+    expect(detectPlatform(["app/build.gradle.kts", "gradle.properties"])).toBe("android");
+  });
+
+  it("ignores Gradle files in excluded directories", () => {
+    expect(detectPlatform([".gradle/build.gradle", "README.md"])).toBe("web");
   });
 });
 

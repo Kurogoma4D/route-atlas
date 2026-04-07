@@ -15,6 +15,7 @@ import {
   detectFramework,
   detectPlatform,
   detectAndroidFramework,
+  isAndroidFramework,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
 import {
@@ -313,8 +314,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     );
 
     // Fetch component files — file extensions depend on the platform
-    const isAndroidProject =
-      framework === "android-navigation" || framework === "android-compose-navigation";
+    const isAndroidProject = isAndroidFramework(framework);
 
     const componentPatterns = isAndroidProject
       ? ["**/*.kt", "**/*.java", "**/*.xml"]

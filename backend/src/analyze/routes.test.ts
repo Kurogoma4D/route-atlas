@@ -15,17 +15,21 @@ const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
 // Mock the analysis modules to avoid real GitHub API / LLM calls
-vi.mock("../analysis/framework-detector.js", () => ({
-  detectFramework: vi.fn(() => ({
-    framework: "nextjs-app",
-    routingFilePatterns: ["app/**/page.tsx"],
-  })),
-  detectPlatform: vi.fn(() => "web"),
-  detectAndroidFramework: vi.fn(() => ({
-    framework: "android-navigation",
-    routingFilePatterns: ["**/res/navigation/*.xml"],
-  })),
-}));
+vi.mock("../analysis/framework-detector.js", async () => {
+  const actual = await vi.importActual<typeof import("../analysis/framework-detector.js")>("../analysis/framework-detector.js");
+  return {
+    ...actual,
+    detectFramework: vi.fn(() => ({
+      framework: "nextjs-app",
+      routingFilePatterns: ["app/**/page.tsx"],
+    })),
+    detectPlatform: vi.fn(() => "web"),
+    detectAndroidFramework: vi.fn(() => ({
+      framework: "android-navigation",
+      routingFilePatterns: ["**/res/navigation/*.xml"],
+    })),
+  };
+});
 
 vi.mock("../analysis/github-file-fetcher.js", () => ({
   fetchFileTree: vi.fn(async () => ({
@@ -451,6 +455,41 @@ describe("Analysis API routes", () => {
         expect(Array.isArray(job.result.screens)).toBe(true);
         expect(Array.isArray(job.result.transitions)).toBe(true);
       }
+    });
+  });
+
+  describe("Android platform pipeline", () => {
+    it("exercises the Android branch when detectPlatform returns 'android'", async () => {
+      // Override detectPlatform to return "android" for this test
+      const frameworkMod = await import("../analysis/framework-detector.js");
+      const detectPlatformMock = vi.mocked(frameworkMod.detectPlatform);
+      const detectAndroidFrameworkMock = vi.mocked(frameworkMod.detectAndroidFramework);
+
+      detectPlatformMock.mockReturnValueOnce("android");
+      detectAndroidFrameworkMock.mockReturnValueOnce({
+        framework: "android-navigation",
+        routingFilePatterns: ["**/res/navigation/*.xml"],
+      });
+
+      const agent = request.agent(app);
+      await authenticateAgent(agent);
+
+      const postRes = await agent
+        .post("/api/analyze")
+        .send({ owner: "foo", repo: "bar", branch: "main" });
+
+      expect(postRes.status).toBe(202);
+      const { jobId } = postRes.body;
+
+      // Wait for background pipeline
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const job = jobManager.getJob(jobId);
+      expect(job).toBeDefined();
+      // The pipeline should complete (or error gracefully). Since our mocks
+      // still return valid LLM responses, it should succeed.
+      expect(job!.status).toBe("complete");
+      expect(detectAndroidFrameworkMock).toHaveBeenCalled();
     });
   });
 

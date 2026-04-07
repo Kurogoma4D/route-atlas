@@ -8,19 +8,14 @@
  * Reference: SPEC.md §5.4
  */
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function isAndroidFramework(framework: string): boolean {
-  return framework === "android-navigation" || framework === "android-compose-navigation";
-}
+import type { FrameworkName } from "./framework-detector.js";
+import { isAndroidFramework } from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
 // ---------------------------------------------------------------------------
 
-export const SYSTEM_PROMPT = `You are a frontend code analysis assistant.
+export const SYSTEM_PROMPT = `You are a source code analysis assistant.
 You analyze source code and extract structured information about screens,
 state variations, and navigation transitions.
 
@@ -104,9 +99,9 @@ export function buildTurn2Prompt(
   screenId: string,
   componentFile: string,
   componentSource: string,
-  framework?: string,
+  framework: FrameworkName,
 ): string {
-  const isAndroid = framework ? isAndroidFramework(framework) : false;
+  const isAndroid = isAndroidFramework(framework);
 
   const lookForItems = isAndroid
     ? `- Loading states (ProgressBar, CircularProgressIndicator, LinearProgressIndicator, shimmer/skeleton composables)
@@ -150,7 +145,7 @@ ${componentSource}
 export function buildTurn3Prompt(
   screens: { id: string; path: string }[],
   allComponentSources: { path: string; content: string }[],
-  framework?: string,
+  framework: FrameworkName,
 ): string {
   const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
 
@@ -158,7 +153,7 @@ export function buildTurn3Prompt(
     .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n");
 
-  const isAndroid = framework ? isAndroidFramework(framework) : false;
+  const isAndroid = isAndroidFramework(framework);
 
   const lookForItems = isAndroid
     ? `- NavController.navigate(), findNavController().navigate()
