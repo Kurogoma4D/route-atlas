@@ -7,7 +7,6 @@
  * Reference: SPEC.md §6.1, §6.3
  */
 
-import { randomUUID } from "node:crypto";
 import type { AnalysisResult } from "@route-atlas/shared";
 
 // ---------------------------------------------------------------------------
@@ -77,7 +76,7 @@ export class JobManager {
       return null;
     }
 
-    const id = randomUUID();
+    const id = crypto.randomUUID();
     const job: AnalysisJob = {
       id,
       userId,

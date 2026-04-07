@@ -1,17 +1,10 @@
 const IV_LENGTH = 12; // 96-bit IV recommended for AES-GCM
 
+// TODO: For Cloudflare Workers deployment, the secret should be passed via
+// Hono's env bindings (c.env.SESSION_SECRET) rather than process.env.
 function getSessionSecret(): string {
-  const secret =
-    (globalThis as unknown as Record<string, string | undefined>)[
-      "SESSION_SECRET"
-    ] ?? process.env["SESSION_SECRET"];
-  if (
-    !secret &&
-    (process.env["NODE_ENV"] === "production" ||
-      (globalThis as unknown as Record<string, string | undefined>)[
-        "NODE_ENV"
-      ] === "production")
-  ) {
+  const secret = process.env["SESSION_SECRET"];
+  if (!secret && process.env["NODE_ENV"] === "production") {
     throw new Error(
       "SESSION_SECRET environment variable must be set in production",
     );
@@ -19,8 +12,13 @@ function getSessionSecret(): string {
   return secret ?? "default-dev-secret-key";
 }
 
+let cachedKey: CryptoKey | null = null;
+let cachedSecret: string | null = null;
+
 async function getEncryptionKey(): Promise<CryptoKey> {
   const secret = getSessionSecret();
+  if (cachedKey && cachedSecret === secret) return cachedKey;
+
   const encoder = new TextEncoder();
   const keyMaterial = await crypto.subtle.importKey(
     "raw",
@@ -31,7 +29,7 @@ async function getEncryptionKey(): Promise<CryptoKey> {
   );
   // Derive a 256-bit AES-GCM key using PBKDF2 with a fixed salt.
   // The salt is constant so the same secret always produces the same key.
-  return crypto.subtle.deriveKey(
+  const key = await crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
       salt: encoder.encode("route-atlas-salt"),
@@ -43,6 +41,10 @@ async function getEncryptionKey(): Promise<CryptoKey> {
     false,
     ["encrypt", "decrypt"],
   );
+
+  cachedSecret = secret;
+  cachedKey = key;
+  return key;
 }
 
 /**
