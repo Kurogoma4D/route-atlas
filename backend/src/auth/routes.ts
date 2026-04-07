@@ -198,9 +198,13 @@ export function createAuthRouter(): Hono {
       c.set("session", session);
 
       return c.redirect("/");
-    } catch {
+    } catch (err) {
       c.set("session", session);
-      return c.redirect("/login?error=token_exchange_failed");
+      const detail =
+        err instanceof Error ? err.message : "unknown";
+      return c.redirect(
+        `/login?error=token_exchange_failed&detail=${encodeURIComponent(detail)}`,
+      );
     }
   });
 
