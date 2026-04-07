@@ -5,6 +5,7 @@ import {
   detectAndroidFramework,
   detectiOSFramework,
   isIOSFramework,
+  isExcludedPath,
   UnsupportedFrameworkError,
   type PackageJson,
 } from "./framework-detector.js";
@@ -487,16 +488,25 @@ describe("detectPlatform — iOS", () => {
     expect(detectPlatform(["MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"])).toBe("ios");
   });
 
-  it("returns 'ios' when Package.swift exists at root", () => {
-    expect(detectPlatform(["Package.swift", "Sources/main.swift"])).toBe("ios");
+  it("returns 'web' when only Package.swift exists (server-side Swift)", () => {
+    expect(detectPlatform(["Package.swift", "Sources/main.swift"])).toBe("web");
+  });
+
+  it("returns 'ios' when Package.swift exists with .xcodeproj", () => {
+    expect(detectPlatform(["Package.swift", "MyApp.xcodeproj/project.pbxproj", "Sources/main.swift"])).toBe("ios");
   });
 
   it("returns 'ios' when Podfile exists at root", () => {
     expect(detectPlatform(["Podfile", "MyApp/ViewController.swift"])).toBe("ios");
   });
 
-  it("returns 'ios' when .xcworkspace exists", () => {
+  it("returns 'ios' when .xcworkspace/contents.xcworkspacedata exists", () => {
     expect(detectPlatform(["MyApp.xcworkspace/contents.xcworkspacedata", "MyApp/AppDelegate.swift"])).toBe("ios");
+  });
+
+  it("does not detect ios from a broad .xcworkspace substring match", () => {
+    // A file path that contains ".xcworkspace" but is not the precise contents file
+    expect(detectPlatform(["logs/MyApp.xcworkspace.log"])).toBe("web");
   });
 
   it("ignores .xcodeproj in excluded directories", () => {
@@ -701,7 +711,7 @@ describe("detectiOSFramework", () => {
   });
 
   it("falls back to ios-swiftui when no source files provided", () => {
-    const result = detectiOSFramework([], ["Package.swift"]);
+    const result = detectiOSFramework([], ["MyApp.xcodeproj/project.pbxproj"]);
     expect(result.framework).toBe("ios-swiftui");
   });
 
@@ -719,7 +729,7 @@ describe("detectiOSFramework", () => {
     expect(result.framework).toBe("ios-swiftui");
   });
 
-  it("only considers .swift files for content analysis", () => {
+  it("detects ios-uikit from Objective-C .m files with UIViewController", () => {
     const result = detectiOSFramework(
       [
         {
@@ -733,7 +743,44 @@ describe("detectiOSFramework", () => {
       ],
       ["MyApp.xcodeproj/project.pbxproj"],
     );
-    // .m files are not checked for Swift content analysis
-    expect(result.framework).toBe("ios-swiftui");
+    expect(result.framework).toBe("ios-uikit");
+  });
+
+  it("detects ios-uikit from Objective-C .h files with UIViewController", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/ViewController.h",
+          content: `
+            #import <UIKit/UIKit.h>
+            @interface ViewController : UIViewController
+            @end
+          `,
+        },
+      ],
+      ["MyApp.xcodeproj/project.pbxproj"],
+    );
+    expect(result.framework).toBe("ios-uikit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isExcludedPath shared helper
+// ---------------------------------------------------------------------------
+describe("isExcludedPath", () => {
+  it("returns true for node_modules paths", () => {
+    expect(isExcludedPath("node_modules/foo/bar.js")).toBe(true);
+  });
+
+  it("returns true for Pods paths", () => {
+    expect(isExcludedPath("Pods/SomeLib/Main.storyboard")).toBe(true);
+  });
+
+  it("returns false for regular source paths", () => {
+    expect(isExcludedPath("Sources/App.swift")).toBe(false);
+  });
+
+  it("returns false for root-level files", () => {
+    expect(isExcludedPath("Package.swift")).toBe(false);
   });
 });

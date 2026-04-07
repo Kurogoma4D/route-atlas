@@ -80,6 +80,13 @@ export function isIOSFramework(framework: string): boolean {
   return framework === "ios-swiftui" || framework === "ios-uikit";
 }
 
+/**
+ * Returns true when the file path starts with any excluded directory prefix.
+ */
+export function isExcludedPath(f: string): boolean {
+  return EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p));
+}
+
 // ---------------------------------------------------------------------------
 // Platform detection
 // ---------------------------------------------------------------------------
@@ -107,29 +114,32 @@ export function detectPlatform(fileTree: string[]): PlatformType {
   const hasGradleAnywhere = fileTree.some(
     (f) =>
       (f.endsWith("/build.gradle") || f.endsWith("/build.gradle.kts")) &&
-      !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+      !isExcludedPath(f),
   );
   const hasManifest = fileTree.some(
-    (f) => f.endsWith("AndroidManifest.xml") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+    (f) => f.endsWith("AndroidManifest.xml") && !isExcludedPath(f),
   );
 
   if (hasGradleRoot || hasGradleAnywhere || hasManifest) {
     return "android";
   }
 
-  // iOS detection: look for Xcode project files, Package.swift, or Podfile
-  const isExcluded = (f: string) => EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p));
-
+  // iOS detection: look for Xcode project files or Podfile.
+  // Package.swift alone is not a reliable iOS indicator (server-side Swift
+  // projects like Vapor also have it), so it is only used as a supporting
+  // signal when combined with other iOS indicators.
   const hasXcodeproj = fileTree.some(
-    (f) => f.endsWith(".xcodeproj/project.pbxproj") && !isExcluded(f),
+    (f) => f.endsWith(".xcodeproj/project.pbxproj") && !isExcludedPath(f),
   );
   const hasXcworkspace = fileTree.some(
-    (f) => f.includes(".xcworkspace") && !f.includes("xcuserdata") && !isExcluded(f),
+    (f) => f.endsWith(".xcworkspace/contents.xcworkspacedata") && !isExcludedPath(f),
   );
-  const hasPackageSwift = fileTree.some((f) => f === "Package.swift");
   const hasPodfile = fileTree.some((f) => f === "Podfile");
+  const hasPackageSwift = fileTree.some((f) => f === "Package.swift");
 
-  if (hasXcodeproj || hasXcworkspace || hasPackageSwift || hasPodfile) {
+  const hasIOSIndicator = hasXcodeproj || hasXcworkspace || hasPodfile;
+
+  if (hasIOSIndicator) {
     return "ios";
   }
 
@@ -254,6 +264,12 @@ export function detectiOSFramework(
     .map((f) => f.content);
   const allSwiftContent = swiftContents.join("\n");
 
+  // Also scan Objective-C files (.m, .h) for UIKit patterns
+  const objcContents = sourceFileContents
+    .filter((f) => f.path.endsWith(".m") || f.path.endsWith(".h"))
+    .map((f) => f.content);
+  const allObjcContent = objcContents.join("\n");
+
   // Check for SwiftUI navigation patterns
   const hasSwiftUIImport = allSwiftContent.includes("import SwiftUI");
   const hasSwiftUINavigation =
@@ -269,11 +285,13 @@ export function detectiOSFramework(
   }
 
   // Check for UIKit patterns: storyboard files or UIViewController subclasses
-  const isExcluded = (f: string) => EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p));
+  // in both Swift and Objective-C sources
   const hasStoryboard = fileTree.some(
-    (f) => f.endsWith(".storyboard") && !isExcluded(f),
+    (f) => f.endsWith(".storyboard") && !isExcludedPath(f),
   );
-  const hasUIViewController = allSwiftContent.includes("UIViewController");
+  const hasUIViewController =
+    allSwiftContent.includes("UIViewController") ||
+    allObjcContent.includes("UIViewController");
 
   if (hasStoryboard || hasUIViewController) {
     return {
@@ -447,7 +465,7 @@ export function detectFramework(
 
   // Fallback: detect plain HTML sites when .html files exist in the tree
   const hasHtmlFiles = fileTree.some(
-    (f) => f.endsWith(".html") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+    (f) => f.endsWith(".html") && !isExcludedPath(f),
   );
   if (hasHtmlFiles) {
     return {
