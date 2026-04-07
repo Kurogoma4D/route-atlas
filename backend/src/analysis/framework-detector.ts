@@ -25,6 +25,7 @@
  * - Flutter Navigator (imperative)
  * - TanStack Router
  * - Astro
+ * - SolidStart
  * - Expo Router (React Native)
  * - React Navigation (React Native)
  */
@@ -52,6 +53,7 @@ export type FrameworkName =
   | "flutter-navigator"
   | "gatsby"
   | "astro"
+  | "solid-start"
   | "expo-router"
   | "react-navigation";
 
@@ -578,6 +580,20 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     resolve: () => ({
       framework: "sveltekit",
       routingFilePatterns: ["src/routes/**/+page.svelte"],
+    }),
+  },
+  {
+    key: "@solidjs/start",
+    resolve: () => ({
+      framework: "solid-start" as const,
+      routingFilePatterns: ["src/routes/**/*.{tsx,jsx,ts,js}"],
+    }),
+  },
+  {
+    key: "solid-start",
+    resolve: () => ({
+      framework: "solid-start" as const,
+      routingFilePatterns: ["src/routes/**/*.{tsx,jsx,ts,js}"],
     }),
   },
   {

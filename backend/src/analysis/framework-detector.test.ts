@@ -266,6 +266,49 @@ describe("detectFramework", () => {
     });
   });
 
+  describe("SolidStart", () => {
+    it("detects SolidStart from @solidjs/start in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "@solidjs/start": "1.0.0", "solid-js": "1.8.0" }),
+        ["src/routes/index.tsx", "src/routes/about.tsx"],
+      );
+      expect(result.framework).toBe("solid-start");
+      expect(result.routingFilePatterns).toContain(
+        "src/routes/**/*.{tsx,jsx,ts,js}",
+      );
+    });
+
+    it("detects SolidStart from solid-start (legacy) in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "solid-start": "0.3.0", "solid-js": "1.7.0" }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("solid-start");
+      expect(result.routingFilePatterns).toContain(
+        "src/routes/**/*.{tsx,jsx,ts,js}",
+      );
+    });
+
+    it("detects SolidStart from @solidjs/start in devDependencies", () => {
+      const result = detectFramework(devPkg({ "@solidjs/start": "1.0.0" }), [
+        "src/routes/index.tsx",
+      ]);
+      expect(result.framework).toBe("solid-start");
+    });
+
+    it("prefers SolidStart over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "@solidjs/start": "1.0.0",
+          "react-router-dom": "6.0.0",
+          "solid-js": "1.8.0",
+        }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("solid-start");
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // 2. Edge cases
   // ---------------------------------------------------------------------------
@@ -1298,6 +1341,10 @@ describe("isExcludedPath", () => {
 
   it("returns true for .astro paths", () => {
     expect(isExcludedPath(".astro/some-file.json")).toBe(true);
+  });
+
+  it("returns true for .solid paths", () => {
+    expect(isExcludedPath(".solid/some-file.json")).toBe(true);
   });
 
   it("returns false for android/ paths (not globally excluded)", () => {
