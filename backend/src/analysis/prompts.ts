@@ -8,11 +8,14 @@
  * Reference: SPEC.md §5.4
  */
 
+import type { FrameworkName } from "./framework-detector.js";
+import { isAndroidFramework } from "./framework-detector.js";
+
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
 // ---------------------------------------------------------------------------
 
-export const SYSTEM_PROMPT = `You are a frontend code analysis assistant.
+export const SYSTEM_PROMPT = `You are a source code analysis assistant.
 You analyze source code and extract structured information about screens,
 state variations, and navigation transitions.
 
@@ -32,12 +35,38 @@ export function buildTurn1Prompt(
     .join("\n\n");
 
   const isPlainHtml = framework === "plain-html";
+  const isAndroid = isAndroidFramework(framework);
 
-  const frameworkInstructions = isPlainHtml
-    ? `Analyze the following plain HTML files. Each HTML file represents a screen.
+  let frameworkInstructions: string;
+
+  if (isPlainHtml) {
+    frameworkInstructions =
+      `Analyze the following plain HTML files. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
-Set "componentFile" to the same HTML file path (without the leading "/").`
-    : `Analyze the following ${framework} routing files and extract every screen / route.`;
+Set "componentFile" to the same HTML file path (without the leading "/").`;
+  } else if (isAndroid) {
+    frameworkInstructions =
+      `Analyze the following Android ${framework === "android-compose-navigation" ? "Jetpack Compose Navigation" : "Navigation Component"} files and extract every screen / destination.
+
+For Android projects, identify screens from:
+- Navigation XML: <fragment>, <dialog>, <activity> elements with android:name and android:id attributes
+- Compose Navigation: composable("route") calls inside NavHost definitions
+- Activity classes: classes extending Activity/AppCompatActivity
+- Fragment classes: classes extending Fragment
+
+Use the navigation destination route string as the "path" (e.g. "home", "settings/{userId}").
+For Activities without navigation routes, use the class name as the path (e.g. "MainActivity", "SettingsActivity").
+Set "componentFile" to the Kotlin/Java source file path.`;
+  } else {
+    frameworkInstructions =
+      `Analyze the following ${framework} routing files and extract every screen / route.`;
+  }
+
+  const exampleComponentFile = isPlainHtml
+    ? "index.html"
+    : isAndroid
+      ? "app/src/main/java/com/example/HomeFragment.kt"
+      : "app/page.tsx";
 
   return `${frameworkInstructions}
 
@@ -53,7 +82,7 @@ Return a JSON array of screen objects. Example:
   {
     "id": "screen_home",
     "path": "/",
-    "componentFile": "${isPlainHtml ? "index.html" : "app/page.tsx"}",
+    "componentFile": "${exampleComponentFile}",
     "label": "Home",
     "description": "Landing page of the application"
   }
@@ -70,17 +99,30 @@ export function buildTurn2Prompt(
   screenId: string,
   componentFile: string,
   componentSource: string,
+  framework: FrameworkName,
 ): string {
-  return `Analyze the following component source code for screen "${screenId}" and extract all state variants.
+  const isAndroid = isAndroidFramework(framework);
 
-Look for:
-- Loading states (spinners, skeletons, suspense boundaries)
+  const lookForItems = isAndroid
+    ? `- Loading states (ProgressBar, CircularProgressIndicator, LinearProgressIndicator, shimmer/skeleton composables)
+- Error states (Snackbar, Toast, AlertDialog for errors, try-catch blocks with error UI)
+- Empty states (no-data messages, empty list placeholders, EmptyView)
+- Authentication-required states (login redirects, auth checks)
+- Permission-based rendering (role checks, admin-only sections)
+- Conditional rendering via "when" statements or "if" blocks that change displayed content
+- Other conditional rendering (feature flags, BuildConfig checks)`
+    : `- Loading states (spinners, skeletons, suspense boundaries)
 - Error states (error boundaries, catch blocks, error UI)
 - Empty states (no-data messages, empty list placeholders)
 - Authentication-required states (login redirects, auth guards)
 - Permission-based rendering (role checks, admin-only sections)
 - Responsive variants (conditional rendering based on screen size, breakpoint checks in component logic)
-- Other conditional rendering (feature flags, A/B tests)
+- Other conditional rendering (feature flags, A/B tests)`;
+
+  return `Analyze the following component source code for screen "${screenId}" and extract all state variants.
+
+Look for:
+${lookForItems}
 
 For each variant return:
 - "id": unique snake_case identifier (e.g. "variant_loading_dashboard")
@@ -103,6 +145,7 @@ ${componentSource}
 export function buildTurn3Prompt(
   screens: { id: string; path: string }[],
   allComponentSources: { path: string; content: string }[],
+  framework: FrameworkName,
 ): string {
   const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
 
@@ -110,26 +153,39 @@ export function buildTurn3Prompt(
     .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n");
 
+  const isAndroid = isAndroidFramework(framework);
+
+  const lookForItems = isAndroid
+    ? `- NavController.navigate(), findNavController().navigate()
+- navController.navigate("route") (Compose Navigation)
+- startActivity(Intent(...)), startActivityForResult()
+- FragmentTransaction.replace(), .add(), .show()
+- popBackStack(), navigateUp()
+- <action> elements in Navigation XML (app:destination attributes)
+- Deep Link definitions (via <deepLink> elements or NavDeepLink)
+- Safe Args navigation calls`
+    : `- <Link>, <a href="...">, routerLink
+- router.push(), router.navigate(), navigate()
+- redirect(), useNavigate()
+- window.location / location.href assignments
+- <form action="..."> submit targets
+- <meta http-equiv="refresh"> redirects
+- Form submit handlers that navigate`;
+
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 
 Known screens:
 ${screenList}
 
 Look for:
-- <Link>, <a href="...">, routerLink
-- router.push(), router.navigate(), navigate()
-- redirect(), useNavigate()
-- window.location / location.href assignments
-- <form action="..."> submit targets
-- <meta http-equiv="refresh"> redirects
-- Form submit handlers that navigate
+${lookForItems}
 
 For each transition return:
 - "id": unique snake_case identifier (e.g. "transition_home_to_login")
 - "from": the source screen id
 - "to": the target screen id
 - "trigger": description of what triggers the navigation (e.g. "Click login button")
-- "method": the code method used (e.g. "Link", "router.push", "window.location")
+- "method": the code method used (e.g. "${isAndroid ? "NavController.navigate" : "Link"}", "${isAndroid ? "startActivity" : "router.push"}", "${isAndroid ? "popBackStack" : "window.location"}")
 - "condition": (optional) any condition that must be true for the transition to occur
 
 Only include transitions between the known screens listed above.

@@ -1,10 +1,12 @@
 /**
  * Framework Detection Engine
  *
- * Parses a repository's package.json to detect the frontend framework
- * and returns the corresponding routing file patterns.
+ * Detects the project platform (web / android) and then the specific
+ * framework or navigation library in use. Returns the corresponding
+ * routing file patterns so the analysis pipeline knows which files to
+ * feed to the LLM.
  *
- * Supported frameworks (per SPEC.md §5.2):
+ * Supported frameworks:
  * - Next.js (App Router / Pages Router)
  * - Nuxt
  * - Angular
@@ -12,6 +14,9 @@
  * - Vue Router
  * - Remix
  * - SvelteKit
+ * - Plain HTML
+ * - Android Navigation Component
+ * - Android Compose Navigation
  */
 
 import { EXCLUDED_DIR_PREFIXES } from "./constants.js";
@@ -25,7 +30,9 @@ export type FrameworkName =
   | "vue-router"
   | "remix"
   | "sveltekit"
-  | "plain-html";
+  | "plain-html"
+  | "android-navigation"
+  | "android-compose-navigation";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -45,6 +52,135 @@ export interface PackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
 }
+
+/**
+ * The platform type determined by project structure files.
+ */
+export type PlatformType = "web" | "android";
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true when the framework name refers to an Android navigation variant.
+ */
+export function isAndroidFramework(framework: string): boolean {
+  return framework === "android-navigation" || framework === "android-compose-navigation";
+}
+
+// ---------------------------------------------------------------------------
+// Platform detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Detect the project platform based on the file tree.
+ *
+ * - If any Gradle build files or AndroidManifest.xml are found, the project
+ *   is classified as "android".
+ * - Otherwise, it falls back to "web".
+ *
+ * Gradle files are matched at the root level as well as in subdirectories
+ * (e.g. `app/build.gradle.kts`) to support multi-module Android projects,
+ * while still excluding paths under EXCLUDED_DIR_PREFIXES.
+ */
+export function detectPlatform(fileTree: string[]): PlatformType {
+  const rootIndicators = [
+    "build.gradle",
+    "build.gradle.kts",
+    "settings.gradle",
+    "settings.gradle.kts",
+  ];
+
+  const hasGradleRoot = fileTree.some((f) => rootIndicators.includes(f));
+  const hasGradleAnywhere = fileTree.some(
+    (f) =>
+      (f.endsWith("/build.gradle") || f.endsWith("/build.gradle.kts")) &&
+      !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+  );
+  const hasManifest = fileTree.some(
+    (f) => f.endsWith("AndroidManifest.xml") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+  );
+
+  if (hasGradleRoot || hasGradleAnywhere || hasManifest) {
+    return "android";
+  }
+
+  return "web";
+}
+
+// ---------------------------------------------------------------------------
+// Android framework detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Routing file patterns for Android Navigation Component (XML-based).
+ */
+const ANDROID_NAVIGATION_PATTERNS = [
+  "**/res/navigation/*.xml",
+  "**/AndroidManifest.xml",
+  "**/*Activity.kt",
+  "**/*Activity.java",
+  "**/*Fragment.kt",
+  "**/*Fragment.java",
+];
+
+/**
+ * Routing file patterns for Jetpack Compose Navigation.
+ */
+const ANDROID_COMPOSE_NAVIGATION_PATTERNS = [
+  "**/res/navigation/*.xml",
+  "**/AndroidManifest.xml",
+  "**/*Activity.kt",
+  "**/*Activity.java",
+  "**/*Fragment.kt",
+  "**/*Fragment.java",
+  "**/*NavGraph.kt",
+  "**/*Navigation.kt",
+  "**/*Screen.kt",
+];
+
+/**
+ * Detect the Android navigation framework from the contents of Gradle build
+ * files found in the repository.
+ *
+ * @param buildFileContents - Array of objects containing the path and content
+ *   of Gradle build files (build.gradle / build.gradle.kts).
+ * @returns The detected Android framework and its routing file patterns.
+ */
+export function detectAndroidFramework(
+  buildFileContents: { path: string; content: string }[],
+): FrameworkDetectionResult {
+  const allContent = buildFileContents.map((f) => f.content).join("\n");
+
+  // Check for Compose Navigation first (more specific)
+  if (allContent.includes("androidx.navigation.compose") ||
+      allContent.includes("navigation-compose")) {
+    return {
+      framework: "android-compose-navigation",
+      routingFilePatterns: ANDROID_COMPOSE_NAVIGATION_PATTERNS,
+    };
+  }
+
+  // Check for standard Navigation Component (XML-based)
+  if (allContent.includes("navigation-fragment") ||
+      allContent.includes("navigation-ui")) {
+    return {
+      framework: "android-navigation",
+      routingFilePatterns: ANDROID_NAVIGATION_PATTERNS,
+    };
+  }
+
+  // Fallback: generic Android project with navigation patterns
+  return {
+    framework: "android-navigation",
+    routingFilePatterns: ANDROID_NAVIGATION_PATTERNS,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Web framework detection (existing logic)
+// ---------------------------------------------------------------------------
 
 /**
  * Frameworks are listed in priority order. When multiple framework

@@ -16,6 +16,7 @@ import type {
   Transition,
 } from "@route-atlas/shared";
 import type { LLMAdapter, ChatMessage } from "./copilot-client.js";
+import type { FrameworkName } from "./framework-detector.js";
 import {
   SYSTEM_PROMPT,
   buildTurn1Prompt,
@@ -60,7 +61,7 @@ export type OnPipelineProgress = (stage: PipelineStage) => void;
 
 export interface AnalysisPipelineInput {
   /** Detected framework name (e.g. "nextjs-app", "react-router"). */
-  framework: string;
+  framework: FrameworkName;
 
   /** Routing definition files with their contents. */
   routingFiles: { path: string; content: string }[];
@@ -194,6 +195,7 @@ export class AnalysisPipeline {
           rawScreen.id,
           rawScreen.componentFile,
           componentSource.content,
+          input.framework,
         );
 
         const turn2Response = await adapter.chatCompletion({
@@ -237,7 +239,7 @@ export class AnalysisPipeline {
       path: s.path,
     }));
 
-    const turn3Prompt = buildTurn3Prompt(screenSummary, input.componentFiles);
+    const turn3Prompt = buildTurn3Prompt(screenSummary, input.componentFiles, input.framework);
     conversationHistory.push({ role: "user", content: turn3Prompt });
 
     const turn3Response = await this.adapter.chatCompletion({

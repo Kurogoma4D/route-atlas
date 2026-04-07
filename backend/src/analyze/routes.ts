@@ -11,7 +11,13 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import { decrypt } from "../auth/crypto.js";
-import { detectFramework } from "../analysis/framework-detector.js";
+import {
+  detectFramework,
+  detectPlatform,
+  detectAndroidFramework,
+  isAndroidFramework,
+} from "../analysis/framework-detector.js";
+import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
 import {
   fetchFileTree,
   filterFilesByPatterns,
@@ -239,38 +245,58 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const { files: allFiles } = await fetchFileTree(owner, repo, branch, token);
     const allPaths = allFiles.map((f) => f.path);
 
-    // Find and parse package.json (may not exist for plain HTML sites)
-    const pkgEntry = allFiles.find((f) => f.path === "package.json");
+    // Determine platform (web vs android) and detect framework
+    const platform = detectPlatform(allPaths);
 
-    let packageJson: PackageJson = {};
-    if (pkgEntry) {
-      const pkgContents = await fetchFileContents(
+    let detectionResult: FrameworkDetectionResult;
+
+    if (platform === "android") {
+      // For Android projects, fetch Gradle build files to detect the navigation library
+      const gradlePatterns = ["**/build.gradle", "**/build.gradle.kts"];
+      const gradleEntries = filterFilesByPatterns(allFiles, gradlePatterns).filter(
+        (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+      );
+      const gradleFiles = await fetchFileContents(
         owner,
         repo,
-        [pkgEntry],
+        gradleEntries,
         token,
-        {
-          ref: branch,
-        },
+        { ref: branch },
       );
+      detectionResult = detectAndroidFramework(gradleFiles);
+    } else {
+      // Web projects: find and parse package.json
+      const pkgEntry = allFiles.find((f) => f.path === "package.json");
 
-      if (pkgContents[0]) {
-        try {
-          packageJson = JSON.parse(pkgContents[0].content) as PackageJson;
-        } catch {
-          jobManager.sendError(
-            jobId,
-            "package.json contains invalid JSON and could not be parsed",
-          );
-          return;
+      let packageJson: PackageJson = {};
+      if (pkgEntry) {
+        const pkgContents = await fetchFileContents(
+          owner,
+          repo,
+          [pkgEntry],
+          token,
+          {
+            ref: branch,
+          },
+        );
+
+        if (pkgContents[0]) {
+          try {
+            packageJson = JSON.parse(pkgContents[0].content) as PackageJson;
+          } catch {
+            jobManager.sendError(
+              jobId,
+              "package.json contains invalid JSON and could not be parsed",
+            );
+            return;
+          }
         }
       }
+
+      detectionResult = detectFramework(packageJson, allPaths);
     }
 
-    const { framework, routingFilePatterns } = detectFramework(
-      packageJson,
-      allPaths,
-    );
+    const { framework, routingFilePatterns } = detectionResult;
 
     // Step 2: Fetch files
     jobManager.sendProgress(jobId, {
@@ -287,17 +313,20 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       { ref: branch },
     );
 
-    // Fetch component files (all .ts/.tsx/.js/.jsx/.vue/.svelte/.html files)
-    // excluding common non-source directories
-    const componentPatterns = [
-      "**/*.tsx",
-      "**/*.jsx",
-      "**/*.ts",
-      "**/*.js",
-      "**/*.vue",
-      "**/*.svelte",
-      ...(framework === "plain-html" ? ["**/*.html"] : []),
-    ];
+    // Fetch component files — file extensions depend on the platform
+    const isAndroidProject = isAndroidFramework(framework);
+
+    const componentPatterns = isAndroidProject
+      ? ["**/*.kt", "**/*.java", "**/*.xml"]
+      : [
+          "**/*.tsx",
+          "**/*.jsx",
+          "**/*.ts",
+          "**/*.js",
+          "**/*.vue",
+          "**/*.svelte",
+          ...(framework === "plain-html" ? ["**/*.html"] : []),
+        ];
     const componentEntries = filterFilesByPatterns(
       allFiles,
       componentPatterns,
