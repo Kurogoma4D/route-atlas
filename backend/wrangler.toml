@@ -9,4 +9,19 @@ NODE_ENV = "production"
 # KV namespace for session storage
 [[kv_namespaces]]
 binding = "SESSIONS"
-id = "PLACEHOLDER_KV_NAMESPACE_ID"
+id = "bd19235dec6b43a3815623a534ebcb1a"
+
+# KV namespace for analysis job state
+[[kv_namespaces]]
+binding = "JOBS"
+id = "e34a4739da1047e5993ce88d46415c2d"
+
+# Queue for analysis tasks
+[[queues.producers]]
+queue = "route-atlas-analyze"
+binding = "ANALYZE_QUEUE"
+
+[[queues.consumers]]
+queue = "route-atlas-analyze"
+max_batch_size = 1
+max_retries = 2
