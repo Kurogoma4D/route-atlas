@@ -302,11 +302,13 @@ Cytoscape.js の `dagre` レイアウトをデフォルトとする。画面遷�
 FROM node:20-slim
 
 # Copilot CLI インストール
-RUN npm install -g @anthropic/copilot-cli  # ※正式なインストール方法は公式ドキュメント参照
+RUN pnpm add -g @anthropic/copilot-cli  # ※正式なインストール方法は公式ドキュメント参照
+
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY . .
 
 EXPOSE 3000

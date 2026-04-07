@@ -23,13 +23,13 @@ GitHub リポジトリの Web フロントエンドコードを解析し、画�
 
 ```bash
 # 依存関係のインストール
-npm install
+pnpm install
 
 # 開発サーバーの起動
-npm run dev
+pnpm dev
 
 # ビルド
-npm run build
+pnpm build
 ```
 
 ## Claude Code エージェント

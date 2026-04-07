@@ -1,40 +1,44 @@
 # ---- Stage 1: Install dependencies ----
 FROM node:22-slim AS deps
 
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
+
 WORKDIR /app
 
 # Copy root workspace files
-COPY package.json package-lock.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY shared/package.json shared/
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
 
 # Install all workspace dependencies
-RUN npm ci
+RUN pnpm install --frozen-lockfile
 
 # ---- Stage 2: Build shared ----
 FROM deps AS shared-build
 
 COPY shared/ shared/
 
-RUN npm run build -w shared
+RUN pnpm --filter @route-atlas/shared build
 
 # ---- Stage 3: Build frontend ----
 FROM shared-build AS frontend-build
 
 COPY frontend/ frontend/
 
-RUN npm run build -w frontend
+RUN pnpm --filter frontend build
 
 # ---- Stage 4: Build backend ----
 FROM shared-build AS backend-build
 
 COPY backend/ backend/
 
-RUN npm run build -w backend
+RUN pnpm --filter @route-atlas/backend build
 
 # ---- Stage 5: Production image ----
 FROM node:22-slim AS production
+
+RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
 WORKDIR /app
 
@@ -45,13 +49,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 RUN addgroup --system appgroup && adduser --system --ingroup appgroup --home /home/appuser appuser
 
 # Copy root workspace files
-COPY package.json package-lock.json ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY shared/package.json shared/
 COPY backend/package.json backend/
 COPY frontend/package.json frontend/
 
 # Install production dependencies only
-RUN npm ci --omit=dev
+RUN pnpm install --frozen-lockfile --prod
 
 # Copy built shared package
 COPY --from=backend-build /app/shared/dist/ shared/dist/

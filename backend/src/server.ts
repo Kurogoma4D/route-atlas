@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import express from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import session from "express-session";
 import { createAuthRouter, requireAuth } from "./auth/routes.js";
@@ -14,7 +14,7 @@ import { JobManager } from "./analyze/job-manager.js";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
+export function createApp(analyzeDeps?: AnalyzeRouterDeps): Express {
   const app = express();
 
   const isProduction = process.env["NODE_ENV"] === "production";
@@ -112,5 +112,5 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps) {
 
 // Default export for backward compatibility with existing tests
 // Note: default app does not include analyze routes (requires CopilotClientManager)
-const app = createApp();
+const app: Express = createApp();
 export { app };
