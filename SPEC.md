@@ -25,7 +25,7 @@ GitHub Copilot のサブスクリプション（Pro 以上）を持つフロン�
 | バックエンド | Node.js (Express) |
 | LLM 解析 | GitHub Copilot SDK (`@github/copilot-sdk`) |
 | 認証 | GitHub OAuth App |
-| デプロイ | コンテナ（Docker）、Copilot CLI をサーバーにインストール |
+| デプロイ | Cloudflare Pages + Workers |
 
 ## 3. モデル選定
 
@@ -294,26 +294,9 @@ Cytoscape.js の `dagre` レイアウトをデフォルトとする。画面遷�
 
 ## 8. サーバー構成
 
-### 8.1 Copilot CLI インストール
+### 8.1 Cloudflare デプロイ
 
-サーバーに Copilot CLI をインストールしておく。SDK がプロセスライフサイクルを管理する。
-
-```dockerfile
-FROM node:20-slim
-
-# Copilot CLI インストール
-RUN pnpm add -g @anthropic/copilot-cli  # ※正式なインストール方法は公式ドキュメント参照
-
-RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
-
-WORKDIR /app
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-COPY . .
-
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
-```
+フロントエンドは Cloudflare Pages、バックエンドは Cloudflare Workers にデプロイする。デプロイは GitHub Actions ワークフロー（`.github/workflows/`）から `wrangler deploy` コマンドで実行される。バックエンドの設定は `backend/wrangler.toml` で管理する。
 
 ### 8.2 同時接続の管理
 

@@ -17,7 +17,7 @@ Key technology stack:
 - **Backend**: Node.js (Express)
 - **LLM Integration**: GitHub Copilot SDK (`@github/copilot-sdk`)
 - **Authentication**: GitHub OAuth App
-- **Deployment**: Docker containers
+- **Deployment**: Cloudflare Pages (frontend) + Workers (backend)
 
 # Core Workflow
 
