@@ -59,7 +59,7 @@ When given a GitHub issue number, execute this precise sequence:
 
 Execute the following checks in order:
 
-- **Type check**: `npx tsc --noEmit` — ensure no type errors
+- **Type check**: `pnpm exec tsc --noEmit` — ensure no type errors
 - **Lint**: `pnpm lint` — no lint warnings
 - **Format**: `pnpm format:check` — verify formatting (if configured)
 - **Test**: `pnpm test` — run the full test suite
