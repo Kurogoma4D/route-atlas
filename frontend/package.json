@@ -12,7 +12,6 @@
     "format:check": "prettier --check 'src/**/*.{ts,html,scss}'"
   },
   "private": true,
-  "packageManager": "npm@11.11.1",
   "dependencies": {
     "@angular/animations": "^21.2.7",
     "@angular/cdk": "^21.2.5",

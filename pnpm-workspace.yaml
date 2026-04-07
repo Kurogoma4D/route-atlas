@@ -1,0 +1,13 @@
+packages:
+  - shared
+  - backend
+  - frontend
+
+onlyBuiltDependencies:
+  - esbuild
+  - "@parcel/watcher"
+  - lmdb
+  - msgpackr-extract
+
+settings:
+  minimumReleaseAge: 4320
