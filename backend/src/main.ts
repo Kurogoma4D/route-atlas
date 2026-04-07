@@ -22,14 +22,21 @@ export default {
     batch: MessageBatch<AnalyzeQueueMessage>,
     env: { JOBS: KVNamespace; SESSION_SECRET?: string },
   ) {
+    console.log(`[queue] Received batch of ${batch.messages.length} messages`);
     const store = new JobStore(env.JOBS);
     for (const msg of batch.messages) {
-      await handleAnalyzeQueue(
-        msg.body,
-        store,
-        clientManager,
-        env.SESSION_SECRET,
-      );
+      console.log(`[queue] Processing job: ${msg.body.jobId}`);
+      try {
+        await handleAnalyzeQueue(
+          msg.body,
+          store,
+          clientManager,
+          env.SESSION_SECRET,
+        );
+        console.log(`[queue] Job completed: ${msg.body.jobId}`);
+      } catch (err) {
+        console.error(`[queue] Job failed: ${msg.body.jobId}`, err);
+      }
       msg.ack();
     }
   },
