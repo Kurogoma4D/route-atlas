@@ -5,7 +5,7 @@ import { createReposRouter } from "./repos/routes.js";
 import { createAnalyzeRouter } from "./analyze/routes.js";
 import type { AnalyzeRouterDeps } from "./analyze/routes.js";
 import { CopilotClientManager } from "./analysis/copilot-client.js";
-import { JobManager } from "./analyze/job-manager.js";
+import { JobStore, getInMemoryJobKV } from "./analyze/job-store.js";
 import { sessionMiddleware } from "./auth/session.js";
 
 export function createApp(analyzeDeps?: AnalyzeRouterDeps): Hono {
@@ -56,13 +56,13 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps): Hono {
   reposRouter.route("/", createReposRouter());
   app.route("/api/repos", reposRouter);
 
-  // Protected: Analysis routes (SSE progress)
+  // Protected: Analysis routes (polling-based progress)
   const resolvedAnalyzeDeps: AnalyzeRouterDeps = analyzeDeps ?? {
     clientManager: new CopilotClientManager((_token) => ({
       chatCompletion: async () => ({ content: "[]" }),
       dispose: () => {},
     })),
-    jobManager: new JobManager(),
+    jobStore: new JobStore(getInMemoryJobKV()),
   };
   const analyzeRouter = new Hono();
   analyzeRouter.use("/*", requireAuth);

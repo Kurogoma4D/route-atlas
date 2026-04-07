@@ -11,3 +11,32 @@ pages_build_output_dir = "frontend/dist/frontend/browser"
 
 [build]
 command = "pnpm install --frozen-lockfile && pnpm run build:shared && pnpm run build:frontend"
+
+# ---------------------------------------------------------------------------
+# KV Namespaces
+# ---------------------------------------------------------------------------
+# SESSIONS: stores session data (cookie-based auth)
+# JOBS: stores analysis job state (progress, results)
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "SESSIONS_KV_NAMESPACE_ID"
+
+[[kv_namespaces]]
+binding = "JOBS"
+id = "JOBS_KV_NAMESPACE_ID"
+
+# ---------------------------------------------------------------------------
+# Queues
+# ---------------------------------------------------------------------------
+# ANALYZE_QUEUE: analysis tasks are enqueued here and processed by the
+# queue consumer defined in the Workers entry point.
+
+[[queues.producers]]
+queue = "route-atlas-analyze"
+binding = "ANALYZE_QUEUE"
+
+[[queues.consumers]]
+queue = "route-atlas-analyze"
+max_batch_size = 1
+max_retries = 2
