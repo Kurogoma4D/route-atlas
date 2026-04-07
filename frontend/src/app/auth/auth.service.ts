@@ -2,6 +2,7 @@ import { Injectable, inject, signal, computed } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
 import { catchError, of, tap } from "rxjs";
 import type { UserInfo } from "@route-atlas/shared";
+import { environment } from "../../environments/environment";
 
 export interface AuthUser extends UserInfo {
   hasCopilot: boolean;
@@ -10,7 +11,7 @@ export interface AuthUser extends UserInfo {
 @Injectable({ providedIn: "root" })
 export class AuthService {
   private http = inject(HttpClient);
-  private apiBase = "/api/auth";
+  private apiBase = `${environment.apiBaseUrl}/api/auth`;
 
   private _user = signal<AuthUser | null>(null);
   private _loading = signal(true);
