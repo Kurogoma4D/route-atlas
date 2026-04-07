@@ -209,6 +209,7 @@ describe("Auth routes", () => {
             client_id: "test-client-id",
             client_secret: "test-client-secret",
             code: "test_code_123",
+            redirect_uri: "http://localhost:3000/api/auth/callback",
           }),
         }),
       );
