@@ -37,7 +37,7 @@ jobs:
       - name: Set Cloudflare Workers secrets
         working-directory: backend
         run: |
-          echo '{"GITHUB_CLIENT_ID":"${{ secrets.CLIENT_ID }}","GITHUB_CLIENT_SECRET":"${{ secrets.CLIENT_SECRET }}"}' | pnpm wrangler secret bulk
+          echo '{"GITHUB_CLIENT_ID":"${{ secrets.CLIENT_ID }}","GITHUB_CLIENT_SECRET":"${{ secrets.CLIENT_SECRET }}","SESSION_SECRET":"${{ secrets.SESSION_SECRET }}"}' | pnpm wrangler secret bulk
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

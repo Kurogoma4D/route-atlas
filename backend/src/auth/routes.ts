@@ -10,23 +10,32 @@ const GITHUB_API_USER_URL = "https://api.github.com/user";
 const GITHUB_API_COPILOT_URL =
   "https://api.github.com/copilot_internal/v2/token";
 
-function getClientId(): string {
-  const id = process.env["GITHUB_CLIENT_ID"];
+type EnvBindings = Record<string, unknown>;
+
+function getClientId(env?: EnvBindings): string {
+  const id =
+    (env?.["GITHUB_CLIENT_ID"] as string | undefined) ??
+    process.env["GITHUB_CLIENT_ID"];
   if (!id) {
     throw new Error("GITHUB_CLIENT_ID environment variable is not set");
   }
   return id;
 }
 
-function getClientSecret(): string {
-  const secret = process.env["GITHUB_CLIENT_SECRET"];
+function getClientSecret(env?: EnvBindings): string {
+  const secret =
+    (env?.["GITHUB_CLIENT_SECRET"] as string | undefined) ??
+    process.env["GITHUB_CLIENT_SECRET"];
   if (!secret) {
     throw new Error("GITHUB_CLIENT_SECRET environment variable is not set");
   }
   return secret;
 }
 
-export async function exchangeCodeForToken(code: string): Promise<string> {
+export async function exchangeCodeForToken(
+  code: string,
+  env?: EnvBindings,
+): Promise<string> {
   const response = await fetch(GITHUB_OAUTH_TOKEN_URL, {
     method: "POST",
     headers: {
@@ -34,8 +43,8 @@ export async function exchangeCodeForToken(code: string): Promise<string> {
       Accept: "application/json",
     },
     body: JSON.stringify({
-      client_id: getClientId(),
-      client_secret: getClientSecret(),
+      client_id: getClientId(env),
+      client_secret: getClientSecret(env),
       code,
     }),
   });
@@ -102,8 +111,10 @@ export function createAuthRouter(): Hono {
   // GET /api/auth/github - Redirect to GitHub OAuth authorize URL
   router.get("/github", (c) => {
     try {
-      const clientId = getClientId();
+      const env = c.env as EnvBindings | undefined;
+      const clientId = getClientId(env);
       const callbackUrl =
+        (env?.["OAUTH_CALLBACK_URL"] as string | undefined) ??
         process.env["OAUTH_CALLBACK_URL"] ??
         "http://localhost:3000/api/auth/callback";
 
@@ -155,7 +166,10 @@ export function createAuthRouter(): Hono {
     }
 
     try {
-      const accessToken = await exchangeCodeForToken(code);
+      const accessToken = await exchangeCodeForToken(
+        code,
+        c.env as EnvBindings | undefined,
+      );
 
       // Fetch user info to validate the token
       const user = await fetchGitHubUser(accessToken);
@@ -164,7 +178,9 @@ export function createAuthRouter(): Hono {
       const hasCopilot = await checkCopilotAccess(accessToken);
 
       // Encrypt and store token in session
-      const encryptedToken = await encrypt(accessToken);
+      const env = c.env as EnvBindings | undefined;
+      const sessionSecret = env?.["SESSION_SECRET"] as string | undefined;
+      const encryptedToken = await encrypt(accessToken, sessionSecret);
       session.encryptedToken = encryptedToken;
       session.user = user;
       session.hasCopilot = hasCopilot;
@@ -220,7 +236,9 @@ export async function requireAuth(c: Context, next: Next) {
 
   try {
     // Decrypt token to verify it's still valid
-    await decrypt(session.encryptedToken);
+    const env = c.env as Record<string, unknown> | undefined;
+    const sessionSecret = env?.["SESSION_SECRET"] as string | undefined;
+    await decrypt(session.encryptedToken, sessionSecret);
     await next();
   } catch {
     const errorResponse: AuthError = {
