@@ -34,15 +34,6 @@ jobs:
       - name: Build backend
         run: pnpm run build:backend
 
-      - name: Ensure Cloudflare Queue exists
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          packageManager: pnpm
-          command: queues create route-atlas-analyze
-        continue-on-error: true
-
       - name: Deploy to Cloudflare Workers
         uses: cloudflare/wrangler-action@v3
         with:
