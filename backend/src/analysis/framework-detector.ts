@@ -22,7 +22,8 @@ export type FrameworkName =
   | "react-router"
   | "vue-router"
   | "remix"
-  | "sveltekit";
+  | "sveltekit"
+  | "plain-html";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -193,6 +194,15 @@ export function detectFramework(
     if (depKeys.has(rule.key)) {
       return rule.resolve(fileTree);
     }
+  }
+
+  // Fallback: detect plain HTML sites when .html files exist in the tree
+  const hasHtmlFiles = fileTree.some((f) => f.endsWith(".html"));
+  if (hasHtmlFiles) {
+    return {
+      framework: "plain-html",
+      routingFilePatterns: ["**/*.html"],
+    };
   }
 
   throw new UnsupportedFrameworkError();

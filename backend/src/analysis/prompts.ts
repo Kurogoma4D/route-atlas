@@ -31,7 +31,15 @@ export function buildTurn1Prompt(
     .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n");
 
-  return `Analyze the following ${framework} routing files and extract every screen / route.
+  const isPlainHtml = framework === "plain-html";
+
+  const frameworkInstructions = isPlainHtml
+    ? `Analyze the following plain HTML files. Each HTML file represents a screen.
+Use the file path as the URL route path (e.g. "/about.html", "/contact/index.html").
+Set "componentFile" to the same HTML file path.`
+    : `Analyze the following ${framework} routing files and extract every screen / route.`;
+
+  return `${frameworkInstructions}
 
 For each screen return a JSON object with these fields:
 - "id": a unique snake_case identifier prefixed with "screen_" (e.g. "screen_dashboard")
@@ -45,7 +53,7 @@ Return a JSON array of screen objects. Example:
   {
     "id": "screen_home",
     "path": "/",
-    "componentFile": "app/page.tsx",
+    "componentFile": "${isPlainHtml ? "index.html" : "app/page.tsx"}",
     "label": "Home",
     "description": "Landing page of the application"
   }
@@ -108,10 +116,12 @@ Known screens:
 ${screenList}
 
 Look for:
-- <Link>, <a>, routerLink
+- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
 - redirect(), useNavigate()
-- window.location assignments
+- window.location / location.href assignments
+- <form action="..."> submit targets
+- <meta http-equiv="refresh"> redirects
 - Form submit handlers that navigate
 
 For each transition return:
