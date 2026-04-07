@@ -10,13 +10,13 @@ import type {
 
 const GITHUB_API_BASE = "https://api.github.com";
 
-function getAccessToken(c: Context): string {
+async function getAccessToken(c: Context): Promise<string> {
   const session = c.get("session");
   const encryptedToken = session?.encryptedToken;
   if (!encryptedToken) {
     throw new Error("No encrypted token in session");
   }
-  return decrypt(encryptedToken);
+  return await decrypt(encryptedToken);
 }
 
 interface GitHubRepo {
@@ -76,7 +76,7 @@ export function createReposRouter(): Hono {
   // GET /api/repos — List user's repositories
   router.get("/", async (c) => {
     try {
-      const token = getAccessToken(c);
+      const token = await getAccessToken(c);
       const page = Math.max(parseInt(c.req.query("page") ?? "") || 1, 1);
       const perPage = Math.min(
         Math.max(parseInt(c.req.query("per_page") ?? "") || 30, 1),
@@ -133,7 +133,7 @@ export function createReposRouter(): Hono {
   // GET /api/repos/:owner/:repo/branches — List branches for a repository
   router.get("/:owner/:repo/branches", async (c) => {
     try {
-      const token = getAccessToken(c);
+      const token = await getAccessToken(c);
       const owner = c.req.param("owner");
       const repo = c.req.param("repo");
 

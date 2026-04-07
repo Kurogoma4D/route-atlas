@@ -299,7 +299,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
   } = params;
 
   try {
-    const token = decrypt(encryptedToken);
+    const token = await decrypt(encryptedToken);
 
     // Step 1: Detect framework
     jobManager.sendProgress(jobId, {
