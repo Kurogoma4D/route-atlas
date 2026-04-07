@@ -24,8 +24,19 @@ export const EXCLUDED_DIR_PREFIXES = [
   ".dart_tool/",
   ".fvm/",
   ".expo/",
+];
+
+/**
+ * Additional directory prefixes excluded only when filtering component files
+ * for React Native projects. These are kept out of the global list because
+ * `detectPlatform` relies on `isExcludedPath` — adding `"android/"` or
+ * `"ios/"` globally would prevent Android/iOS platform detection for
+ * non-RN projects whose source files live under those directories.
+ */
+export const REACT_NATIVE_EXCLUDED_DIR_PREFIXES = [
   "android/",
   "ios/",
+  ".expo/",
 ];
 
 /**

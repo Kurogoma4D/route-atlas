@@ -452,6 +452,16 @@ interface FrameworkRule {
   resolve: (fileTree: string[]) => FrameworkDetectionResult;
 }
 
+/**
+ * Shared routing file patterns for React Navigation (used by both the
+ * explicit `@react-navigation/native` rule and the `react-native` fallback).
+ */
+const REACT_NAVIGATION_PATTERNS: string[] = [
+  "src/**/navigation/*.{tsx,jsx,ts,js}",
+  "src/**/*Navigator.{tsx,jsx,ts,js}",
+  "src/**/*Screen.{tsx,jsx,ts,js}",
+];
+
 const FRAMEWORK_RULES: FrameworkRule[] = [
   // React Native frameworks — checked before web frameworks because RN
   // projects may also have react-router-dom or other web dependencies.
@@ -461,6 +471,10 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
       framework: "expo-router",
       routingFilePatterns: [
         "app/**/_layout.{tsx,jsx,ts,js}",
+        "app/**/index.{tsx,jsx,ts,js}",
+        // Expo Router convention: every file under app/ is a route (except
+        // _-prefixed files other than _layout). The catch-all is intentionally
+        // broad to match dynamic routes like [id].tsx and named routes.
         "app/**/*.{tsx,jsx,ts,js}",
       ],
     }),
@@ -469,22 +483,14 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     key: "@react-navigation/native",
     resolve: () => ({
       framework: "react-navigation",
-      routingFilePatterns: [
-        "src/**/navigation/*.{tsx,jsx,ts,js}",
-        "src/**/*Navigator.{tsx,jsx,ts,js}",
-        "src/**/*Screen.{tsx,jsx,ts,js}",
-      ],
+      routingFilePatterns: REACT_NAVIGATION_PATTERNS,
     }),
   },
   {
     key: "react-native",
     resolve: () => ({
       framework: "react-navigation",
-      routingFilePatterns: [
-        "src/**/navigation/*.{tsx,jsx,ts,js}",
-        "src/**/*Navigator.{tsx,jsx,ts,js}",
-        "src/**/*Screen.{tsx,jsx,ts,js}",
-      ],
+      routingFilePatterns: REACT_NAVIGATION_PATTERNS,
     }),
   },
   // Web frameworks

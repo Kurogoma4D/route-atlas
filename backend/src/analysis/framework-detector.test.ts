@@ -941,6 +941,7 @@ describe("React Native / Expo detection", () => {
       );
       expect(result.framework).toBe("expo-router");
       expect(result.routingFilePatterns).toContain("app/**/_layout.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain("app/**/index.{tsx,jsx,ts,js}");
       expect(result.routingFilePatterns).toContain("app/**/*.{tsx,jsx,ts,js}");
     });
 
@@ -1058,12 +1059,12 @@ describe("isExcludedPath", () => {
     expect(isExcludedPath(".expo/types/router.d.ts")).toBe(true);
   });
 
-  it("returns true for android/ paths", () => {
-    expect(isExcludedPath("android/app/build.gradle")).toBe(true);
+  it("returns false for android/ paths (not globally excluded)", () => {
+    expect(isExcludedPath("android/app/build.gradle")).toBe(false);
   });
 
-  it("returns true for ios/ paths", () => {
-    expect(isExcludedPath("ios/Podfile.lock")).toBe(true);
+  it("returns false for ios/ paths (not globally excluded)", () => {
+    expect(isExcludedPath("ios/Podfile.lock")).toBe(false);
   });
 
   it("returns false for regular source paths", () => {
