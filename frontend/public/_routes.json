@@ -1,5 +1,6 @@
 {
   "version": 1,
-  "description": "Route configuration for Cloudflare Pages. Excludes /api/* from static asset serving so that API requests are handled by the backend Workers service.",
+  "description": "Route configuration for Cloudflare Pages.",
+  "include": ["/*"],
   "exclude": ["/api/*"]
 }

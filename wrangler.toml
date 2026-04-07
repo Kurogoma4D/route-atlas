@@ -10,4 +10,4 @@ compatibility_date = "2024-09-23"
 pages_build_output_dir = "frontend/dist/frontend/browser"
 
 [build]
-command = "pnpm install --frozen-lockfile && pnpm run build:frontend"
+command = "pnpm install --frozen-lockfile && pnpm run build:shared && pnpm run build:frontend"
