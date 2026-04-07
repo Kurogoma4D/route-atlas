@@ -4,6 +4,7 @@
   height: 100vh;
   width: 100%;
   position: relative;
+  background: var(--ra-bg);
 }
 
 .loading-overlay {
@@ -15,8 +16,8 @@
   gap: 16px;
 
   p {
-    color: var(--mat-sys-on-surface-variant);
-    font-size: 1rem;
+    color: var(--ra-text-tertiary);
+    font-size: 13px;
   }
 }
 
@@ -31,24 +32,25 @@
 }
 
 .error-icon {
-  font-size: 48px;
-  width: 48px;
-  height: 48px;
+  font-size: 40px;
+  width: 40px;
+  height: 40px;
+  color: var(--ra-error);
 }
 
 .error-message {
-  color: var(--mat-sys-error);
+  color: var(--ra-error);
   margin: 0;
-  font-size: 1rem;
+  font-size: 14px;
 }
 
 .graph-toolbar {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-bottom: 1px solid var(--mat-sys-outline-variant);
-  background: var(--mat-sys-surface);
+  gap: 2px;
+  padding: 6px 12px;
+  background: var(--ra-surface);
+  border-bottom: 1px solid var(--ra-border);
   z-index: 1;
 }
 
@@ -76,15 +78,16 @@
 }
 
 .empty-icon {
-  font-size: 48px;
-  width: 48px;
-  height: 48px;
-  color: var(--mat-sys-on-surface-variant);
+  font-size: 40px;
+  width: 40px;
+  height: 40px;
+  color: var(--ra-text-tertiary);
 }
 
 .empty-message {
-  color: var(--mat-sys-on-surface-variant);
+  color: var(--ra-text-secondary);
   margin: 0;
-  font-size: 1rem;
-  max-width: 480px;
+  font-size: 13px;
+  max-width: 400px;
+  line-height: 1.6;
 }

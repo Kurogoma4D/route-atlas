@@ -4,21 +4,26 @@
 }
 
 h2 {
-  margin-bottom: 16px;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 20px;
+  color: var(--ra-text);
 }
 
 .search-field {
   width: 100%;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .loading-container {
   text-align: center;
-  padding: 32px 0;
+  padding: 48px 0;
 
   p {
     margin-top: 16px;
-    color: var(--mat-sys-on-surface-variant);
+    color: var(--ra-text-tertiary);
+    font-size: 13px;
   }
 }
 
@@ -27,20 +32,22 @@ h2 {
 }
 
 .error-message {
-  color: var(--mat-sys-error);
+  color: var(--ra-error);
+  font-size: 13px;
   margin: 0 0 8px;
 }
 
 .empty-message {
   text-align: center;
-  color: var(--mat-sys-on-surface-variant);
-  padding: 32px 0;
+  color: var(--ra-text-tertiary);
+  padding: 48px 0;
+  font-size: 13px;
 }
 
 .repos-layout {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 24px;
+  gap: 20px;
   align-items: start;
 
   @media (max-width: 768px) {
@@ -56,11 +63,23 @@ h2 {
   padding: 4px 0;
 }
 
+// Ensure list options have enough height for multi-line repo content
+:host ::ng-deep .mat-mdc-list-option {
+  height: auto !important;
+  min-height: 56px;
+
+  .mdc-list-item__content {
+    padding: 8px 0;
+  }
+}
+
 .repo-name {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-weight: 500;
+  font-size: 13px;
+  color: var(--ra-text);
 }
 
 .repo-full-name {
@@ -68,13 +87,15 @@ h2 {
 }
 
 .private-icon {
-  font-size: 16px;
-  color: var(--mat-sys-on-surface-variant);
+  font-size: 14px !important;
+  width: 14px !important;
+  height: 14px !important;
+  color: var(--ra-text-tertiary);
 }
 
 .repo-description {
-  font-size: 0.85rem;
-  color: var(--mat-sys-on-surface-variant);
+  font-size: 12px;
+  color: var(--ra-text-secondary);
   margin-top: 2px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -84,14 +105,15 @@ h2 {
 .repo-meta {
   display: flex;
   gap: 12px;
-  font-size: 0.8rem;
-  color: var(--mat-sys-on-surface-variant);
-  margin-top: 4px;
+  font-size: 11px;
+  color: var(--ra-text-tertiary);
+  margin-top: 3px;
+  font-family: var(--ra-font-mono);
 }
 
 .load-more {
   text-align: center;
-  margin-top: 16px;
+  margin-top: 12px;
 }
 
 .branch-section {
@@ -101,12 +123,16 @@ h2 {
 .branch-item {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  font-size: 13px;
+  font-family: var(--ra-font-mono);
 }
 
 .protected-icon {
-  font-size: 16px;
-  color: var(--mat-sys-on-surface-variant);
+  font-size: 14px !important;
+  width: 14px !important;
+  height: 14px !important;
+  color: var(--ra-text-tertiary);
 }
 
 .analysis-error {

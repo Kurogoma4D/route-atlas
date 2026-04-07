@@ -40,19 +40,20 @@ describe("App", () => {
     expect(app).toBeTruthy();
   });
 
-  it("should render toolbar with Route Atlas", async () => {
+  it("should render header with Route Atlas when authenticated", async () => {
     const fixture = TestBed.createComponent(App);
     fixture.detectChanges();
-    httpTesting
-      .expectOne("/api/auth/me")
-      .flush(
-        { error: "unauthorized" },
-        { status: 401, statusText: "Unauthorized" },
-      );
+    httpTesting.expectOne("/api/auth/me").flush({
+      login: "testuser",
+      avatarUrl: "https://github.com/testuser.png",
+      name: "Test User",
+      hasCopilot: true,
+    });
     fixture.detectChanges();
     await fixture.whenStable();
+    fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
-    expect(compiled.querySelector("mat-toolbar")?.textContent).toContain(
+    expect(compiled.querySelector(".app-logo")?.textContent).toContain(
       "Route Atlas",
     );
   });

@@ -1,24 +1,27 @@
 <div class="login-container">
-  <mat-card class="login-card">
-    <mat-card-header>
-      <mat-card-title>
-        <h1>Route Atlas</h1>
-      </mat-card-title>
-      <mat-card-subtitle>
-        GitHub
-        リポジトリのフロントエンドコードを解析し、画面遷移をグラフとして可視化します。
-      </mat-card-subtitle>
-    </mat-card-header>
-    <mat-card-content>
-      @if (errorMessage()) {
-      <p class="error-message">{{ errorMessage() }}</p>
-      }
-    </mat-card-content>
-    <mat-card-actions align="end">
-      <button mat-flat-button (click)="onLogin()">
-        <mat-icon>login</mat-icon>
-        GitHub でログイン
-      </button>
-    </mat-card-actions>
-  </mat-card>
-</div>
+  <div class="login-card">
+    <div class="login-header">
+      <h1 class="login-title">Route Atlas</h1>
+      <p class="login-description">
+        GitHub リポジトリのフロントエンドコードを解析し、画面遷移をグラフとして可視化します。
+      </p>
+    </div>
+    @if (errorMessage()) {
+    <div class="error-banner">
+      <mat-icon>error_outline</mat-icon>
+      <span>{{ errorMessage() }}</span>
+    </div>
+    }
+    <div class="notice">
+      <mat-icon>info</mat-icon>
+      <ul>
+        <li>本ツールはご自身の GitHub Copilot クォータを使用します。利用状況にご注意ください。</li>
+        <li>Copilot の学習のためのデータ収集設定は、ご自身の GitHub アカウントの設定に基づきます。</li>
+        <li>本サービスではリポジトリのデータ収集・保存は行いません。</li>
+      </ul>
+    </div>
+    <button mat-flat-button class="login-button" (click)="onLogin()">
+      <mat-icon>login</mat-icon>
+      GitHub でログイン
+    </button>
+  </div>

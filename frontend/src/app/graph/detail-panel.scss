@@ -1,5 +1,5 @@
 .detail-panel {
-  width: 380px;
+  width: 360px;
   max-height: 100%;
   overflow-y: auto;
   padding: 8px;
@@ -13,6 +13,17 @@ mat-card-header {
   position: relative;
 }
 
+mat-card-title {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+  letter-spacing: -0.01em;
+}
+
+mat-card-subtitle {
+  font-family: var(--ra-font-mono) !important;
+  font-size: 12px !important;
+}
+
 .close-button {
   position: absolute;
   top: 0;
@@ -20,9 +31,10 @@ mat-card-header {
 }
 
 .description {
-  color: var(--mat-sys-on-surface-variant);
-  font-size: 0.875rem;
+  color: var(--ra-text-secondary);
+  font-size: 13px;
   margin-bottom: 16px;
+  line-height: 1.5;
 }
 
 .section {
@@ -32,26 +44,36 @@ mat-card-header {
 .section-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-weight: 500;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
   margin-bottom: 8px;
-  color: var(--mat-sys-on-surface);
+  color: var(--ra-text-secondary);
+
+  mat-icon {
+    font-size: 16px;
+    width: 16px;
+    height: 16px;
+  }
 }
 
 .file-path {
   display: block;
-  font-size: 0.8rem;
-  color: var(--mat-sys-on-surface-variant);
-  background: var(--mat-sys-surface-variant);
+  font-family: var(--ra-font-mono);
+  font-size: 12px;
+  color: var(--ra-text-secondary);
+  background: var(--ra-surface-dim);
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--ra-radius-sm);
+  border: 1px solid var(--ra-border-subtle);
   word-break: break-all;
 }
 
 .empty-hint {
-  color: var(--mat-sys-on-surface-variant);
-  font-style: italic;
-  font-size: 0.875rem;
+  color: var(--ra-text-tertiary);
+  font-size: 12px;
 }
 
 .variant-chips {
@@ -60,11 +82,13 @@ mat-card-header {
 }
 
 .variant-condition {
-  font-size: 0.8rem;
-  color: var(--mat-sys-on-surface-variant);
+  font-size: 12px;
+  color: var(--ra-text-tertiary);
+  font-family: var(--ra-font-mono);
 }
 
 .transition-condition {
-  color: var(--mat-sys-on-surface-variant);
-  font-style: italic;
+  color: var(--ra-text-tertiary);
+  font-family: var(--ra-font-mono);
+  font-size: 12px;
 }
