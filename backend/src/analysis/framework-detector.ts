@@ -26,6 +26,7 @@
  * - TanStack Router
  * - Astro
  * - SolidStart
+ * - Qwik City
  * - Expo Router (React Native)
  * - React Navigation (React Native)
  */
@@ -55,7 +56,8 @@ export type FrameworkName =
   | "astro"
   | "solid-start"
   | "expo-router"
-  | "react-navigation";
+  | "react-navigation"
+  | "qwik-city";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -594,6 +596,16 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     resolve: () => ({
       framework: "solid-start" as const,
       routingFilePatterns: ["src/routes/**/*.{tsx,jsx,ts,js}"],
+    }),
+  },
+  {
+    key: "@builder.io/qwik-city",
+    resolve: () => ({
+      framework: "qwik-city" as const,
+      routingFilePatterns: [
+        "src/routes/**/index.{tsx,jsx,ts,js}",
+        "src/routes/**/layout.{tsx,jsx,ts,js}",
+      ],
     }),
   },
   {

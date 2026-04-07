@@ -146,6 +146,20 @@ For SolidStart projects (file-based routing similar to SvelteKit):
 
 Use the file-based route path as the "path" (e.g. "/", "/about", "/users/:id").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
+  } else if (framework === "qwik-city") {
+    frameworkInstructions = `Analyze the following Qwik City routing files and extract every screen / route.
+
+For Qwik City projects (directory-based routing):
+- Each directory under src/routes/ with an index.tsx represents a route. The directory path maps to the URL route (e.g. src/routes/index.tsx -> /, src/routes/about/index.tsx -> /about, src/routes/blog/[slug]/index.tsx -> /blog/:slug).
+- Files named index.tsx (or index.jsx, index.ts, index.js) represent the page component for their directory.
+- [param] brackets represent dynamic route segments: src/routes/blog/[slug]/index.tsx -> /blog/:slug.
+- [...catchAll] represents catch-all routes.
+- (group) directories (parenthesized names) are route groups — they do NOT appear in the URL path but organize routes logically.
+- layout.tsx files are layout definitions that wrap child routes — they are NOT screens. Do NOT include them as separate screens.
+- API routes (files that only export onGet, onPost, onPut, onDelete request handler functions) are server endpoints, NOT screens — exclude them from the result.
+
+Use the directory-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
+Set "componentFile" to the index.tsx/.jsx/.ts/.js file path.`;
   } else if (isPlainHtml) {
     frameworkInstructions = `Analyze the following plain HTML files. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
@@ -401,6 +415,13 @@ export function buildTurn3Prompt(
 - <a href="..."> standard anchor tags
 - window.location / location.href assignments
 - Form submit handlers that navigate`;
+  } else if (framework === "qwik-city") {
+    lookForItems = `- <Link href="..."> component from @builder.io/qwik-city
+- useNavigate() hook for programmatic navigation
+- <Form> component with action-based navigation (@builder.io/qwik-city)
+- <a href="..."> standard anchor tags
+- window.location / location.href assignments
+- Form submit handlers that navigate`;
   } else {
     lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
@@ -427,7 +448,9 @@ export function buildTurn3Prompt(
                 ? `"Link to", "navigate", "window.location"`
                 : framework === "solid-start"
                   ? `"A href", "useNavigate", "redirect"`
-                  : `"Link", "router.push", "window.location"`;
+                  : framework === "qwik-city"
+                    ? `"Link href", "useNavigate", "Form"`
+                    : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 
