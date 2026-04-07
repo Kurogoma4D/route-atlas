@@ -15,7 +15,10 @@ import {
   detectFramework,
   detectPlatform,
   detectAndroidFramework,
+  detectiOSFramework,
   isAndroidFramework,
+  isIOSFramework,
+  isExcludedPath,
 } from "../analysis/framework-detector.js";
 import type { FrameworkDetectionResult } from "../analysis/framework-detector.js";
 import {
@@ -32,7 +35,6 @@ import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "./job-manager.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
-import { EXCLUDED_DIR_PREFIXES } from "../analysis/constants.js";
 
 // ---------------------------------------------------------------------------
 // Request body shape
@@ -254,7 +256,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       // For Android projects, fetch Gradle build files to detect the navigation library
       const gradlePatterns = ["**/build.gradle", "**/build.gradle.kts"];
       const gradleEntries = filterFilesByPatterns(allFiles, gradlePatterns).filter(
-        (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+        (f) => !isExcludedPath(f.path),
       );
       const gradleFiles = await fetchFileContents(
         owner,
@@ -264,6 +266,34 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         { ref: branch },
       );
       detectionResult = detectAndroidFramework(gradleFiles);
+    } else if (platform === "ios") {
+      // For iOS projects, fetch Swift/ObjC source files to detect SwiftUI vs UIKit
+      const iosSourcePatterns = ["**/*.swift", "**/*.m", "**/*.h"];
+      const iosEntries = filterFilesByPatterns(allFiles, iosSourcePatterns)
+        .filter(
+          (f) => !isExcludedPath(f.path),
+        );
+
+      // Prioritize files likely to contain UI imports so we don't miss
+      // framework signals when slicing to 50 files.
+      const uiNamePatterns = ["View", "ViewController", "App", "Scene", "Controller"];
+      const prioritized = iosEntries.sort((a, b) => {
+        const aHasUI = uiNamePatterns.some((p) => a.path.includes(p));
+        const bHasUI = uiNamePatterns.some((p) => b.path.includes(p));
+        if (aHasUI && !bHasUI) return -1;
+        if (!aHasUI && bHasUI) return 1;
+        return 0;
+      });
+
+      const iosSliced = prioritized.slice(0, 50);
+      const iosFiles = await fetchFileContents(
+        owner,
+        repo,
+        iosSliced,
+        token,
+        { ref: branch },
+      );
+      detectionResult = detectiOSFramework(iosFiles, allPaths);
     } else {
       // Web projects: find and parse package.json
       const pkgEntry = allFiles.find((f) => f.path === "package.json");
@@ -315,23 +345,30 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
     // Fetch component files — file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
+    const isIOSProject = isIOSFramework(framework);
 
-    const componentPatterns = isAndroidProject
-      ? ["**/*.kt", "**/*.java", "**/*.xml"]
-      : [
-          "**/*.tsx",
-          "**/*.jsx",
-          "**/*.ts",
-          "**/*.js",
-          "**/*.vue",
-          "**/*.svelte",
-          ...(framework === "plain-html" ? ["**/*.html"] : []),
-        ];
+    let componentPatterns: string[];
+
+    if (isAndroidProject) {
+      componentPatterns = ["**/*.kt", "**/*.java", "**/*.xml"];
+    } else if (isIOSProject) {
+      componentPatterns = ["**/*.swift", "**/*.m", "**/*.h", "**/*.storyboard"];
+    } else {
+      componentPatterns = [
+        "**/*.tsx",
+        "**/*.jsx",
+        "**/*.ts",
+        "**/*.js",
+        "**/*.vue",
+        "**/*.svelte",
+        ...(framework === "plain-html" ? ["**/*.html"] : []),
+      ];
+    }
     const componentEntries = filterFilesByPatterns(
       allFiles,
       componentPatterns,
     ).filter(
-      (f) => !EXCLUDED_DIR_PREFIXES.some((prefix) => f.path.startsWith(prefix)),
+      (f) => !isExcludedPath(f.path),
     );
     const componentFiles = await fetchFileContents(
       owner,

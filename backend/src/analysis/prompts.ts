@@ -9,7 +9,7 @@
  */
 
 import type { FrameworkName } from "./framework-detector.js";
-import { isAndroidFramework } from "./framework-detector.js";
+import { isAndroidFramework, isIOSFramework } from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
@@ -36,6 +36,7 @@ export function buildTurn1Prompt(
 
   const isPlainHtml = framework === "plain-html";
   const isAndroid = isAndroidFramework(framework);
+  const isIOS = isIOSFramework(framework);
 
   let frameworkInstructions: string;
 
@@ -57,6 +58,18 @@ For Android projects, identify screens from:
 Use the navigation destination route string as the "path" (e.g. "home", "settings/{userId}").
 For Activities without navigation routes, use the class name as the path (e.g. "MainActivity", "SettingsActivity").
 Set "componentFile" to the Kotlin/Java source file path.`;
+  } else if (isIOS) {
+    frameworkInstructions =
+      `Analyze the following iOS ${framework === "ios-swiftui" ? "SwiftUI" : "UIKit"} files and extract every screen / destination.
+
+For iOS projects, identify screens from:
+- Storyboard XML: <viewController> and <scene> elements with storyboardIdentifier attributes
+- SwiftUI: Views used inside NavigationStack, NavigationView, NavigationSplitView, or TabView
+- UIViewController subclasses: classes extending UIViewController or its subclasses
+- Coordinator/Router pattern: navigation targets defined in Coordinator or Router classes
+
+Use the Storyboard ID, SwiftUI navigation destination value, or class name as the "path" (e.g. "HomeView", "SettingsViewController", "profileDetail").
+Set "componentFile" to the .swift, .m, or .storyboard file path.`;
   } else {
     frameworkInstructions =
       `Analyze the following ${framework} routing files and extract every screen / route.`;
@@ -66,7 +79,9 @@ Set "componentFile" to the Kotlin/Java source file path.`;
     ? "index.html"
     : isAndroid
       ? "app/src/main/java/com/example/HomeFragment.kt"
-      : "app/page.tsx";
+      : isIOS
+        ? "Sources/Views/HomeView.swift"
+        : "app/page.tsx";
 
   return `${frameworkInstructions}
 
@@ -102,22 +117,36 @@ export function buildTurn2Prompt(
   framework: FrameworkName,
 ): string {
   const isAndroid = isAndroidFramework(framework);
+  const isIOS = isIOSFramework(framework);
 
-  const lookForItems = isAndroid
-    ? `- Loading states (ProgressBar, CircularProgressIndicator, LinearProgressIndicator, shimmer/skeleton composables)
+  let lookForItems: string;
+
+  if (isAndroid) {
+    lookForItems = `- Loading states (ProgressBar, CircularProgressIndicator, LinearProgressIndicator, shimmer/skeleton composables)
 - Error states (Snackbar, Toast, AlertDialog for errors, try-catch blocks with error UI)
 - Empty states (no-data messages, empty list placeholders, EmptyView)
 - Authentication-required states (login redirects, auth checks)
 - Permission-based rendering (role checks, admin-only sections)
 - Conditional rendering via "when" statements or "if" blocks that change displayed content
-- Other conditional rendering (feature flags, BuildConfig checks)`
-    : `- Loading states (spinners, skeletons, suspense boundaries)
+- Other conditional rendering (feature flags, BuildConfig checks)`;
+  } else if (isIOS) {
+    lookForItems = `- Loading states (ProgressView in SwiftUI, UIActivityIndicatorView in UIKit, skeleton/shimmer views)
+- Error states (Alert in SwiftUI, UIAlertController in UIKit, error message views)
+- Empty states (no-data messages, empty list placeholders, ContentUnavailableView)
+- Authentication-required states (login redirects, auth checks)
+- Permission-based rendering (role checks, entitlement checks)
+- @ViewBuilder conditional rendering (if/else, switch statements inside view body)
+- @Environment / @EnvironmentObject / @State / @Binding driven state changes
+- Other conditional rendering (feature flags, #if DEBUG checks)`;
+  } else {
+    lookForItems = `- Loading states (spinners, skeletons, suspense boundaries)
 - Error states (error boundaries, catch blocks, error UI)
 - Empty states (no-data messages, empty list placeholders)
 - Authentication-required states (login redirects, auth guards)
 - Permission-based rendering (role checks, admin-only sections)
 - Responsive variants (conditional rendering based on screen size, breakpoint checks in component logic)
 - Other conditional rendering (feature flags, A/B tests)`;
+  }
 
   return `Analyze the following component source code for screen "${screenId}" and extract all state variants.
 
@@ -154,23 +183,43 @@ export function buildTurn3Prompt(
     .join("\n\n");
 
   const isAndroid = isAndroidFramework(framework);
+  const isIOS = isIOSFramework(framework);
 
-  const lookForItems = isAndroid
-    ? `- NavController.navigate(), findNavController().navigate()
+  let lookForItems: string;
+
+  if (isAndroid) {
+    lookForItems = `- NavController.navigate(), findNavController().navigate()
 - navController.navigate("route") (Compose Navigation)
 - startActivity(Intent(...)), startActivityForResult()
 - FragmentTransaction.replace(), .add(), .show()
 - popBackStack(), navigateUp()
 - <action> elements in Navigation XML (app:destination attributes)
 - Deep Link definitions (via <deepLink> elements or NavDeepLink)
-- Safe Args navigation calls`
-    : `- <Link>, <a href="...">, routerLink
+- Safe Args navigation calls`;
+  } else if (isIOS) {
+    lookForItems = `- NavigationLink(destination:), NavigationLink(value:)
+- .navigationDestination(for:) modifier
+- .sheet(), .fullScreenCover(), .popover() (modal transitions)
+- navigationController?.pushViewController(), .present() (UIKit push/modal)
+- performSegue(withIdentifier:), Storyboard <segue> elements
+- coordinator.navigate(to:) (Coordinator pattern)
+- TabView tab switching
+- dismiss(), navigationController?.popViewController() (back navigation)`;
+  } else {
+    lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
 - redirect(), useNavigate()
 - window.location / location.href assignments
 - <form action="..."> submit targets
 - <meta http-equiv="refresh"> redirects
 - Form submit handlers that navigate`;
+  }
+
+  const methodExamples = isAndroid
+    ? `"NavController.navigate", "startActivity", "popBackStack"`
+    : isIOS
+      ? `"NavigationLink", "pushViewController", "sheet"`
+      : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 
@@ -185,7 +234,7 @@ For each transition return:
 - "from": the source screen id
 - "to": the target screen id
 - "trigger": description of what triggers the navigation (e.g. "Click login button")
-- "method": the code method used (e.g. "${isAndroid ? "NavController.navigate" : "Link"}", "${isAndroid ? "startActivity" : "router.push"}", "${isAndroid ? "popBackStack" : "window.location"}")
+- "method": the code method used (e.g. ${methodExamples})
 - "condition": (optional) any condition that must be true for the transition to occur
 
 Only include transitions between the known screens listed above.

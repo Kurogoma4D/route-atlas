@@ -3,7 +3,9 @@ import {
   detectFramework,
   detectPlatform,
   detectAndroidFramework,
-  isAndroidFramework,
+  detectiOSFramework,
+  isIOSFramework,
+  isExcludedPath,
   UnsupportedFrameworkError,
   type PackageJson,
 } from "./framework-detector.js";
@@ -475,5 +477,310 @@ describe("detectAndroidFramework", () => {
       },
     ]);
     expect(result.framework).toBe("android-compose-navigation");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Platform detection — iOS
+// ---------------------------------------------------------------------------
+describe("detectPlatform — iOS", () => {
+  it("returns 'ios' when .xcodeproj/project.pbxproj exists", () => {
+    expect(detectPlatform(["MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"])).toBe("ios");
+  });
+
+  it("returns 'web' when only Package.swift exists (server-side Swift)", () => {
+    expect(detectPlatform(["Package.swift", "Sources/main.swift"])).toBe("web");
+  });
+
+  it("returns 'ios' when Package.swift exists with .xcodeproj", () => {
+    expect(detectPlatform(["Package.swift", "MyApp.xcodeproj/project.pbxproj", "Sources/main.swift"])).toBe("ios");
+  });
+
+  it("returns 'ios' when Podfile exists at root", () => {
+    expect(detectPlatform(["Podfile", "MyApp/ViewController.swift"])).toBe("ios");
+  });
+
+  it("returns 'ios' when .xcworkspace/contents.xcworkspacedata exists", () => {
+    expect(detectPlatform(["MyApp.xcworkspace/contents.xcworkspacedata", "MyApp/AppDelegate.swift"])).toBe("ios");
+  });
+
+  it("does not detect ios from a broad .xcworkspace substring match", () => {
+    // A file path that contains ".xcworkspace" but is not the precise contents file
+    expect(detectPlatform(["logs/MyApp.xcworkspace.log"])).toBe("web");
+  });
+
+  it("ignores .xcodeproj in excluded directories", () => {
+    expect(detectPlatform(["Pods/SomePod.xcodeproj/project.pbxproj"])).toBe("web");
+  });
+
+  it("prefers android over ios when both indicators present", () => {
+    // Android detection runs first in detectPlatform
+    expect(detectPlatform(["build.gradle", "MyApp.xcodeproj/project.pbxproj"])).toBe("android");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isIOSFramework helper
+// ---------------------------------------------------------------------------
+describe("isIOSFramework", () => {
+  it("returns true for ios-swiftui", () => {
+    expect(isIOSFramework("ios-swiftui")).toBe(true);
+  });
+
+  it("returns true for ios-uikit", () => {
+    expect(isIOSFramework("ios-uikit")).toBe(true);
+  });
+
+  it("returns false for android frameworks", () => {
+    expect(isIOSFramework("android-navigation")).toBe(false);
+  });
+
+  it("returns false for web frameworks", () => {
+    expect(isIOSFramework("nextjs-app")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// iOS framework detection
+// ---------------------------------------------------------------------------
+describe("detectiOSFramework", () => {
+  it("detects ios-swiftui when SwiftUI import and NavigationStack are found", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/ContentView.swift",
+          content: `
+            import SwiftUI
+
+            struct ContentView: View {
+              var body: some View {
+                NavigationStack {
+                  HomeView()
+                }
+              }
+            }
+          `,
+        },
+      ],
+      ["MyApp.xcodeproj/project.pbxproj", "Sources/ContentView.swift"],
+    );
+    expect(result.framework).toBe("ios-swiftui");
+    expect(result.routingFilePatterns).toContain("**/*View.swift");
+    expect(result.routingFilePatterns).toContain("**/*App.swift");
+  });
+
+  it("detects ios-swiftui with NavigationView", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/App.swift",
+          content: `
+            import SwiftUI
+
+            struct MyApp: App {
+              var body: some Scene {
+                WindowGroup {
+                  NavigationView {
+                    HomeView()
+                  }
+                }
+              }
+            }
+          `,
+        },
+      ],
+      [],
+    );
+    expect(result.framework).toBe("ios-swiftui");
+  });
+
+  it("detects ios-swiftui with NavigationSplitView", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/MainView.swift",
+          content: `
+            import SwiftUI
+
+            struct MainView: View {
+              var body: some View {
+                NavigationSplitView {
+                  SidebarView()
+                } detail: {
+                  DetailView()
+                }
+              }
+            }
+          `,
+        },
+      ],
+      [],
+    );
+    expect(result.framework).toBe("ios-swiftui");
+  });
+
+  it("detects ios-uikit when storyboard files exist", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/ViewController.swift",
+          content: `
+            import UIKit
+
+            class HomeViewController: UIViewController {
+              override func viewDidLoad() {
+                super.viewDidLoad()
+              }
+            }
+          `,
+        },
+      ],
+      ["Main.storyboard", "Sources/ViewController.swift"],
+    );
+    expect(result.framework).toBe("ios-uikit");
+    expect(result.routingFilePatterns).toContain("**/*.storyboard");
+    expect(result.routingFilePatterns).toContain("**/*ViewController.swift");
+    expect(result.routingFilePatterns).toContain("**/*ViewController.m");
+  });
+
+  it("detects ios-uikit when UIViewController subclasses are found", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/LoginViewController.swift",
+          content: `
+            import UIKit
+
+            class LoginViewController: UIViewController {
+              override func viewDidLoad() {
+                super.viewDidLoad()
+              }
+            }
+          `,
+        },
+      ],
+      ["MyApp.xcodeproj/project.pbxproj"],
+    );
+    expect(result.framework).toBe("ios-uikit");
+  });
+
+  it("prefers SwiftUI over UIKit when both are present", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/ContentView.swift",
+          content: `
+            import SwiftUI
+
+            struct ContentView: View {
+              var body: some View {
+                NavigationStack {
+                  Text("Hello")
+                }
+              }
+            }
+          `,
+        },
+        {
+          path: "Sources/LegacyVC.swift",
+          content: `
+            import UIKit
+            class LegacyVC: UIViewController {}
+          `,
+        },
+      ],
+      ["Main.storyboard"],
+    );
+    expect(result.framework).toBe("ios-swiftui");
+  });
+
+  it("falls back to ios-swiftui for generic iOS project", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/App.swift",
+          content: `
+            import Foundation
+            print("Hello")
+          `,
+        },
+      ],
+      ["MyApp.xcodeproj/project.pbxproj"],
+    );
+    expect(result.framework).toBe("ios-swiftui");
+  });
+
+  it("falls back to ios-swiftui when no source files provided", () => {
+    const result = detectiOSFramework([], ["MyApp.xcodeproj/project.pbxproj"]);
+    expect(result.framework).toBe("ios-swiftui");
+  });
+
+  it("ignores storyboard files in excluded directories", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/App.swift",
+          content: "import Foundation\nlet x = 1",
+        },
+      ],
+      ["Pods/SomeLib/Main.storyboard"],
+    );
+    // No UIViewController, storyboard is in Pods/ (excluded), so fallback
+    expect(result.framework).toBe("ios-swiftui");
+  });
+
+  it("detects ios-uikit from Objective-C .m files with UIViewController", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/ViewController.m",
+          content: `
+            #import <UIKit/UIKit.h>
+            @interface ViewController : UIViewController
+            @end
+          `,
+        },
+      ],
+      ["MyApp.xcodeproj/project.pbxproj"],
+    );
+    expect(result.framework).toBe("ios-uikit");
+  });
+
+  it("detects ios-uikit from Objective-C .h files with UIViewController", () => {
+    const result = detectiOSFramework(
+      [
+        {
+          path: "Sources/ViewController.h",
+          content: `
+            #import <UIKit/UIKit.h>
+            @interface ViewController : UIViewController
+            @end
+          `,
+        },
+      ],
+      ["MyApp.xcodeproj/project.pbxproj"],
+    );
+    expect(result.framework).toBe("ios-uikit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isExcludedPath shared helper
+// ---------------------------------------------------------------------------
+describe("isExcludedPath", () => {
+  it("returns true for node_modules paths", () => {
+    expect(isExcludedPath("node_modules/foo/bar.js")).toBe(true);
+  });
+
+  it("returns true for Pods paths", () => {
+    expect(isExcludedPath("Pods/SomeLib/Main.storyboard")).toBe(true);
+  });
+
+  it("returns false for regular source paths", () => {
+    expect(isExcludedPath("Sources/App.swift")).toBe(false);
+  });
+
+  it("returns false for root-level files", () => {
+    expect(isExcludedPath("Package.swift")).toBe(false);
   });
 });

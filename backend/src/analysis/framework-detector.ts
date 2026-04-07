@@ -1,7 +1,7 @@
 /**
  * Framework Detection Engine
  *
- * Detects the project platform (web / android) and then the specific
+ * Detects the project platform (web / android / ios) and then the specific
  * framework or navigation library in use. Returns the corresponding
  * routing file patterns so the analysis pipeline knows which files to
  * feed to the LLM.
@@ -17,6 +17,8 @@
  * - Plain HTML
  * - Android Navigation Component
  * - Android Compose Navigation
+ * - iOS SwiftUI
+ * - iOS UIKit
  */
 
 import { EXCLUDED_DIR_PREFIXES } from "./constants.js";
@@ -32,7 +34,9 @@ export type FrameworkName =
   | "sveltekit"
   | "plain-html"
   | "android-navigation"
-  | "android-compose-navigation";
+  | "android-compose-navigation"
+  | "ios-swiftui"
+  | "ios-uikit";
 
 export interface FrameworkDetectionResult {
   framework: FrameworkName;
@@ -56,7 +60,7 @@ export interface PackageJson {
 /**
  * The platform type determined by project structure files.
  */
-export type PlatformType = "web" | "android";
+export type PlatformType = "web" | "android" | "ios";
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -67,6 +71,20 @@ export type PlatformType = "web" | "android";
  */
 export function isAndroidFramework(framework: string): boolean {
   return framework === "android-navigation" || framework === "android-compose-navigation";
+}
+
+/**
+ * Returns true when the framework name refers to an iOS framework variant.
+ */
+export function isIOSFramework(framework: string): boolean {
+  return framework === "ios-swiftui" || framework === "ios-uikit";
+}
+
+/**
+ * Returns true when the file path starts with any excluded directory prefix.
+ */
+export function isExcludedPath(f: string): boolean {
+  return EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p));
 }
 
 // ---------------------------------------------------------------------------
@@ -96,14 +114,32 @@ export function detectPlatform(fileTree: string[]): PlatformType {
   const hasGradleAnywhere = fileTree.some(
     (f) =>
       (f.endsWith("/build.gradle") || f.endsWith("/build.gradle.kts")) &&
-      !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+      !isExcludedPath(f),
   );
   const hasManifest = fileTree.some(
-    (f) => f.endsWith("AndroidManifest.xml") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+    (f) => f.endsWith("AndroidManifest.xml") && !isExcludedPath(f),
   );
 
   if (hasGradleRoot || hasGradleAnywhere || hasManifest) {
     return "android";
+  }
+
+  // iOS detection: look for Xcode project files or Podfile.
+  // Package.swift alone is not a reliable iOS indicator (server-side Swift
+  // projects like Vapor also have it), so it is only used as a supporting
+  // signal when combined with other iOS indicators.
+  const hasXcodeproj = fileTree.some(
+    (f) => f.endsWith(".xcodeproj/project.pbxproj") && !isExcludedPath(f),
+  );
+  const hasXcworkspace = fileTree.some(
+    (f) => f.endsWith(".xcworkspace/contents.xcworkspacedata") && !isExcludedPath(f),
+  );
+  const hasPodfile = fileTree.some((f) => f === "Podfile");
+
+  const hasIOSIndicator = hasXcodeproj || hasXcworkspace || hasPodfile;
+
+  if (hasIOSIndicator) {
+    return "ios";
   }
 
   return "web";
@@ -175,6 +211,98 @@ export function detectAndroidFramework(
   return {
     framework: "android-navigation",
     routingFilePatterns: ANDROID_NAVIGATION_PATTERNS,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// iOS framework detection
+// ---------------------------------------------------------------------------
+
+/**
+ * Routing file patterns for iOS SwiftUI projects.
+ */
+const IOS_SWIFTUI_PATTERNS = [
+  "**/*View.swift",
+  "**/*App.swift",
+  "**/*NavigationView.swift",
+  "**/*Coordinator.swift",
+  "**/*Router.swift",
+  "**/*Wireframe.swift",
+];
+
+/**
+ * Routing file patterns for iOS UIKit projects.
+ */
+const IOS_UIKIT_PATTERNS = [
+  "**/*.storyboard",
+  "**/*ViewController.swift",
+  "**/*ViewController.m",
+  "**/*Coordinator.swift",
+  "**/*Router.swift",
+  "**/*Wireframe.swift",
+  "**/*View.swift",
+  "**/*App.swift",
+  "**/*NavigationView.swift",
+];
+
+/**
+ * Detect the iOS UI framework from Swift source file contents found in
+ * the repository.
+ *
+ * @param sourceFileContents - Array of objects containing the path and content
+ *   of Swift source files.
+ * @param fileTree - The full file tree used for storyboard detection.
+ * @returns The detected iOS framework and its routing file patterns.
+ */
+export function detectiOSFramework(
+  sourceFileContents: { path: string; content: string }[],
+  fileTree: string[],
+): FrameworkDetectionResult {
+  const swiftContents = sourceFileContents
+    .filter((f) => f.path.endsWith(".swift"))
+    .map((f) => f.content);
+  const allSwiftContent = swiftContents.join("\n");
+
+  // Also scan Objective-C files (.m, .h) for UIKit patterns
+  const objcContents = sourceFileContents
+    .filter((f) => f.path.endsWith(".m") || f.path.endsWith(".h"))
+    .map((f) => f.content);
+  const allObjcContent = objcContents.join("\n");
+
+  // Check for SwiftUI navigation patterns
+  const hasSwiftUIImport = allSwiftContent.includes("import SwiftUI");
+  const hasSwiftUINavigation =
+    allSwiftContent.includes("NavigationStack") ||
+    allSwiftContent.includes("NavigationView") ||
+    allSwiftContent.includes("NavigationSplitView");
+
+  if (hasSwiftUIImport && hasSwiftUINavigation) {
+    return {
+      framework: "ios-swiftui",
+      routingFilePatterns: IOS_SWIFTUI_PATTERNS,
+    };
+  }
+
+  // Check for UIKit patterns: storyboard files or UIViewController subclasses
+  // in both Swift and Objective-C sources
+  const hasStoryboard = fileTree.some(
+    (f) => f.endsWith(".storyboard") && !isExcludedPath(f),
+  );
+  const hasUIViewController =
+    allSwiftContent.includes("UIViewController") ||
+    allObjcContent.includes("UIViewController");
+
+  if (hasStoryboard || hasUIViewController) {
+    return {
+      framework: "ios-uikit",
+      routingFilePatterns: IOS_UIKIT_PATTERNS,
+    };
+  }
+
+  // Fallback: generic iOS project — default to SwiftUI (modern default)
+  return {
+    framework: "ios-swiftui",
+    routingFilePatterns: IOS_SWIFTUI_PATTERNS,
   };
 }
 
@@ -336,7 +464,7 @@ export function detectFramework(
 
   // Fallback: detect plain HTML sites when .html files exist in the tree
   const hasHtmlFiles = fileTree.some(
-    (f) => f.endsWith(".html") && !EXCLUDED_DIR_PREFIXES.some((p) => f.startsWith(p)),
+    (f) => f.endsWith(".html") && !isExcludedPath(f),
   );
   if (hasHtmlFiles) {
     return {
