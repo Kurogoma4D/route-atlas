@@ -1,39 +1,168 @@
-// Include theming for Angular Material with `mat.theme()`.
-// This Sass mixin will define CSS variables that are used for styling Angular Material
-// components according to the Material 3 design spec.
-// Learn more about theming and how to use it for your application's
-// custom components at https://material.angular.dev/guide/theming
 @use '@angular/material' as mat;
+
+// --- Custom Design Tokens ---
+:root {
+  --ra-bg: #f8f9fa;
+  --ra-surface: #ffffff;
+  --ra-surface-dim: #f1f3f5;
+  --ra-border: #e2e5e9;
+  --ra-border-subtle: #eef0f2;
+  --ra-text: #1a1d21;
+  --ra-text-secondary: #656d76;
+  --ra-text-tertiary: #8b949e;
+  --ra-accent: #0d9488;
+  --ra-accent-soft: #ccfbf1;
+  --ra-accent-hover: #0f766e;
+  --ra-error: #dc2626;
+  --ra-error-soft: #fef2f2;
+  --ra-radius-sm: 6px;
+  --ra-radius-md: 10px;
+  --ra-radius-lg: 14px;
+  --ra-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --ra-shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --ra-font-mono: 'JetBrains Mono', monospace;
+}
 
 html {
   height: 100%;
   @include mat.theme(
     (
       color: (
-        primary: mat.$azure-palette,
-        tertiary: mat.$blue-palette,
+        primary: mat.$cyan-palette,
+        tertiary: mat.$cyan-palette,
       ),
-      typography: Roboto,
-      density: 0,
+      typography: 'DM Sans',
+      density: -1,
     )
   );
 }
 
 body {
-  // Default the application to a light color theme. This can be changed to
-  // `dark` to enable the dark color theme, or to `light dark` to defer to the
-  // user's system settings.
   color-scheme: light;
-
-  // Set a default background, font and text colors for the application using
-  // Angular Material's system-level CSS variables. Learn more about these
-  // variables at https://material.angular.dev/guide/system-variables
-  background-color: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
-  font: var(--mat-sys-body-medium);
-
-  // Reset the user agent margin.
+  background-color: var(--ra-bg);
+  color: var(--ra-text);
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
   margin: 0;
   height: 100%;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
-/* You can add global styles to this file, and also import other style files */
+
+// --- Global Material Overrides ---
+
+// Flatten cards — no heavy elevation
+.mat-mdc-card {
+  border: 1px solid var(--ra-border) !important;
+  box-shadow: var(--ra-shadow-sm) !important;
+  border-radius: var(--ra-radius-md) !important;
+  background: var(--ra-surface) !important;
+}
+
+// Primary flat button → teal accent
+.mat-mdc-unelevated-button.mat-primary {
+  --mdc-filled-button-container-color: var(--ra-accent);
+  --mdc-filled-button-label-text-color: #fff;
+  border-radius: var(--ra-radius-sm) !important;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+
+  &:hover {
+    --mdc-filled-button-container-color: var(--ra-accent-hover);
+  }
+}
+
+// Outlined / stroked buttons
+.mat-mdc-outlined-button {
+  border-color: var(--ra-border) !important;
+  border-radius: var(--ra-radius-sm) !important;
+  color: var(--ra-text) !important;
+  font-weight: 500;
+
+  &:hover {
+    background: var(--ra-surface-dim) !important;
+  }
+}
+
+// Form fields — tighter, cleaner
+.mat-mdc-form-field {
+  --mdc-outlined-text-field-outline-color: var(--ra-border);
+  --mdc-outlined-text-field-focus-outline-color: var(--ra-accent);
+  --mdc-outlined-text-field-hover-outline-color: var(--ra-text-tertiary);
+  --mdc-outlined-text-field-container-shape: var(--ra-radius-sm);
+  font-size: 13px;
+}
+
+// Toolbar — lighter
+.mat-toolbar {
+  background: var(--ra-surface) !important;
+  color: var(--ra-text) !important;
+  border-bottom: 1px solid var(--ra-border);
+  box-shadow: none !important;
+  font-size: 14px;
+  min-height: 52px !important;
+  height: 52px !important;
+}
+
+// Progress bar → teal
+.mat-mdc-progress-bar {
+  --mdc-linear-progress-active-indicator-color: var(--ra-accent);
+}
+
+// Spinner → teal
+.mat-mdc-progress-spinner {
+  --mdc-circular-progress-active-indicator-color: var(--ra-accent);
+}
+
+// Stepper → teal icons
+.mat-step-header .mat-step-icon-selected {
+  background-color: var(--ra-accent) !important;
+}
+
+// Checkbox → teal
+.mat-mdc-checkbox {
+  --mdc-checkbox-selected-checkmark-color: #fff;
+  --mdc-checkbox-selected-focus-icon-color: var(--ra-accent);
+  --mdc-checkbox-selected-hover-icon-color: var(--ra-accent-hover);
+  --mdc-checkbox-selected-icon-color: var(--ra-accent);
+  --mdc-checkbox-selected-pressed-icon-color: var(--ra-accent);
+}
+
+// Selection list — cleaner items with auto height for multi-line content
+.mat-mdc-list-option {
+  border-radius: var(--ra-radius-sm) !important;
+  margin: 2px 0 !important;
+  height: auto !important;
+}
+
+// Chips — subtle
+.mat-mdc-chip {
+  font-size: 11px !important;
+  --mdc-chip-elevated-container-color: var(--ra-surface-dim);
+  border-radius: 4px !important;
+  height: 22px !important;
+}
+
+// Menu
+.mat-mdc-menu-panel {
+  border: 1px solid var(--ra-border) !important;
+  box-shadow: var(--ra-shadow-md) !important;
+  border-radius: var(--ra-radius-md) !important;
+}
+
+// Scrollbar
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ra-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ra-text-tertiary);
+}

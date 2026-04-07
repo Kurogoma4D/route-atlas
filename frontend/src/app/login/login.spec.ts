@@ -66,7 +66,7 @@ describe("LoginComponent", () => {
     await fixture.whenStable();
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
-    const errorEl = compiled.querySelector(".error-message");
+    const errorEl = compiled.querySelector(".error-banner");
     expect(errorEl?.textContent).toContain("キャンセル");
   });
 });

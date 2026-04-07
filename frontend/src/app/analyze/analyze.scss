@@ -1,11 +1,15 @@
 .analyze-container {
-  max-width: 640px;
+  max-width: 560px;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 32px 16px;
 }
 
 h2 {
-  margin-bottom: 24px;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0 0 24px;
+  color: var(--ra-text);
 }
 
 .error-card {
@@ -21,19 +25,20 @@ h2 {
 }
 
 .error-icon {
-  font-size: 48px;
-  width: 48px;
-  height: 48px;
+  font-size: 40px;
+  width: 40px;
+  height: 40px;
+  color: var(--ra-error);
 }
 
 .error-message {
-  color: var(--mat-sys-error);
+  color: var(--ra-error);
   margin: 0;
-  font-size: 1rem;
+  font-size: 14px;
 }
 
 .step-label {
-  font-size: 0.95rem;
+  font-size: 13px;
 }
 
 .step-content {
@@ -42,5 +47,5 @@ h2 {
 }
 
 .step-done-icon {
-  color: var(--mat-sys-primary);
+  color: var(--ra-accent);
 }
