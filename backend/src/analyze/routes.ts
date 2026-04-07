@@ -42,6 +42,7 @@ import {
 import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "./job-manager.js";
+import type { SSEWriter } from "./job-manager.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
 
 // ---------------------------------------------------------------------------
@@ -70,7 +71,18 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
 
   // POST /api/analyze — Start analysis job
   router.post("/", async (c) => {
-    const body = (await c.req.json()) as AnalyzeRequestBody;
+    let body: AnalyzeRequestBody;
+    try {
+      body = (await c.req.json()) as AnalyzeRequestBody;
+    } catch {
+      return c.json(
+        {
+          error: "invalid_json",
+          message: "Request body must be valid JSON",
+        },
+        400,
+      );
+    }
 
     // Validate required fields
     if (!body.owner || !body.repo || !body.branch) {
@@ -218,7 +230,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
     // Register the SSE connection using the raw response writer
     return streamSSE(c, async (stream) => {
       // Create a response-like object for the job manager
-      const sseWriter = {
+      const sseWriter: SSEWriter = {
         write: (chunk: string) => {
           // Parse the SSE format and re-emit via stream
           stream.write(chunk);
@@ -229,18 +241,12 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
         },
       };
 
-      jobManager.addConnection(
-        jobId,
-        sseWriter as unknown as import("./job-manager.js").SSEWriter,
-      );
+      jobManager.addConnection(jobId, sseWriter);
 
       // Wait for the stream to be aborted (client disconnect or job complete)
       await new Promise<void>((resolve) => {
         stream.onAbort(() => {
-          jobManager.removeConnection(
-            jobId,
-            sseWriter as unknown as import("./job-manager.js").SSEWriter,
-          );
+          jobManager.removeConnection(jobId, sseWriter);
           resolve();
         });
 

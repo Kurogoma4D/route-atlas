@@ -15,15 +15,21 @@ export default {
 };
 
 // ---------------------------------------------------------------------------
-// Local development: start a Node.js HTTP server when run directly
+// Local development: start a Node.js HTTP server when run directly.
+// In Cloudflare Workers, navigator.userAgent is "Cloudflare-Workers".
 // ---------------------------------------------------------------------------
-if (
-  typeof process !== "undefined" &&
-  process.env?.["NODE_ENV"] !== "production"
-) {
-  const PORT = process.env?.["PORT"] ?? 3000;
-  const { serve } = await import("@hono/node-server");
-  serve({ fetch: app.fetch, port: Number(PORT) }, (info) => {
-    console.log(`Server running on http://localhost:${info.port}`);
-  });
+const isWorkers =
+  typeof navigator !== "undefined" &&
+  navigator.userAgent === "Cloudflare-Workers";
+
+if (!isWorkers) {
+  try {
+    const PORT = process.env?.["PORT"] ?? 3000;
+    const { serve } = await import("@hono/node-server");
+    serve({ fetch: app.fetch, port: Number(PORT) }, (info) => {
+      console.log(`Server running on http://localhost:${info.port}`);
+    });
+  } catch {
+    // Ignore — module resolution may fail in non-Node runtimes
+  }
 }

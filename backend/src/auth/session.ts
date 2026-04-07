@@ -68,25 +68,14 @@ export function sessionMiddleware() {
     // Persist session back to cookie after handler runs
     const updated = c.get("session");
     if (updated && Object.keys(updated).length > 0) {
-      const isProduction =
-        c.env?.NODE_ENV === "production" ||
-        (typeof process !== "undefined" &&
-          process.env?.["NODE_ENV"] === "production");
-      const callbackUrl =
-        (typeof process !== "undefined" &&
-          process.env?.["OAUTH_CALLBACK_URL"]) ||
-        "";
-      const secureCookie =
-        (typeof process !== "undefined" &&
-          process.env?.["COOKIE_SECURE"] === "true") ||
-        ((typeof process === "undefined" ||
-          process.env?.["COOKIE_SECURE"] === undefined) &&
-          callbackUrl.startsWith("https://"));
+      // Default to secure cookies unless explicitly opted out via env var.
+      // This works reliably in both Cloudflare Workers and Node.js contexts.
+      const secure = c.env?.COOKIE_SECURE !== "false";
 
       setCookie(c, SESSION_COOKIE_NAME, encodeSession(updated), {
         path: "/",
         httpOnly: true,
-        secure: isProduction ? secureCookie : false,
+        secure,
         sameSite: "Lax",
         maxAge: 24 * 60 * 60, // 24 hours (in seconds)
       });
