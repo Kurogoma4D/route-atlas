@@ -196,10 +196,12 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
       }
     } else {
       // No queue binding (local dev) — run pipeline inline in background
+      const env = c.env as Record<string, unknown> | undefined;
       runPipeline({
         ...message,
         jobStore,
         clientManager: deps.clientManager,
+        sessionSecret: env?.["SESSION_SECRET"] as string | undefined,
       }).catch((err) => {
         console.error(
           `[analyze] Unhandled pipeline error for job ${jobId}:`,
@@ -304,12 +306,14 @@ export async function handleAnalyzeQueue(
   message: AnalyzeQueueMessage,
   jobStore: JobStore,
   clientManager: CopilotClientManager,
+  sessionSecret?: string,
 ): Promise<void> {
   try {
     await runPipeline({
       ...message,
       jobStore,
       clientManager,
+      sessionSecret,
     });
   } catch (err) {
     console.error(`[queue] Pipeline failed for job ${message.jobId}:`, err);
@@ -332,6 +336,7 @@ interface PipelineParams {
   encryptedToken: string;
   jobStore: JobStore;
   clientManager: CopilotClientManager;
+  sessionSecret?: string;
 }
 
 async function runPipeline(params: PipelineParams): Promise<void> {
@@ -345,10 +350,11 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     encryptedToken,
     jobStore,
     clientManager,
+    sessionSecret,
   } = params;
 
   try {
-    const token = await decrypt(encryptedToken);
+    const token = await decrypt(encryptedToken, sessionSecret);
 
     // Step 1: Detect framework
     await jobStore.sendProgress(jobId, {
