@@ -9,7 +9,13 @@
  */
 
 import type { FrameworkName } from "./framework-detector.js";
-import { isAndroidFramework, isIOSFramework, isFlutterFramework, isReactNativeFramework, isAstroFramework } from "./framework-detector.js";
+import {
+  isAndroidFramework,
+  isIOSFramework,
+  isFlutterFramework,
+  isReactNativeFramework,
+  isAstroFramework,
+} from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
@@ -45,8 +51,7 @@ export function buildTurn1Prompt(
 
   if (isReactNative) {
     if (framework === "expo-router") {
-      frameworkInstructions =
-        `Analyze the following Expo Router files and extract every screen / route.
+      frameworkInstructions = `Analyze the following Expo Router files and extract every screen / route.
 
 For Expo Router projects (file-based routing similar to Next.js App Router):
 - Each file under app/ represents a route. The file path maps to the URL route (e.g. app/(tabs)/home.tsx -> /home, app/profile/[id].tsx -> /profile/[id]).
@@ -58,8 +63,7 @@ For Expo Router projects (file-based routing similar to Next.js App Router):
 Use the file-based route path as the "path" (e.g. "/", "/home", "/profile/[id]").
 Set "componentFile" to the .tsx/.jsx file path.`;
     } else {
-      frameworkInstructions =
-        `Analyze the following React Navigation files and extract every screen / route.
+      frameworkInstructions = `Analyze the following React Navigation files and extract every screen / route.
 
 For React Navigation projects (v5+):
 - createStackNavigator(), createNativeStackNavigator() define stack-based navigation.
@@ -79,8 +83,7 @@ Set "componentFile" to the .tsx/.jsx file path containing the screen component.`
           ? "auto_route (@RoutePage() annotations, AutoRouter definitions)"
           : "Navigator 1.0 (MaterialApp routes / onGenerateRoute)";
 
-    frameworkInstructions =
-      `Analyze the following Flutter ${flutterLibLabel} files and extract every screen / route.
+    frameworkInstructions = `Analyze the following Flutter ${flutterLibLabel} files and extract every screen / route.
 
 For Flutter projects, identify screens from:
 - go_router: GoRoute(path: '...', builder: ...) and ShellRoute / StatefulShellRoute definitions
@@ -90,9 +93,24 @@ For Flutter projects, identify screens from:
 Use the route path string as the "path" (e.g. "/home", "/user/:id").
 For Navigator 1.0 named routes, use the route name (e.g. "/settings").
 Set "componentFile" to the .dart file path containing the screen widget.`;
+  } else if (framework === "tanstack-router") {
+    frameworkInstructions = `Analyze the following TanStack Router files and extract every screen / route.
+
+For TanStack Router projects:
+- createFileRoute('/path') defines file-based routes where the path argument is the route path.
+- createRootRoute() defines the root layout route.
+- createRoute() defines code-based routes with a path option.
+- routeTree.gen.ts contains the auto-generated route tree — extract all routes from this file when present.
+- createRouter({ routeTree }) wires the route tree to the router instance.
+- File-based routing: files under src/routes/ map to URL paths (e.g. src/routes/about.tsx -> /about, src/routes/posts/$postId.tsx -> /posts/$postId).
+- $param segments represent dynamic route parameters.
+- _layout files define layout routes (shared UI wrappers).
+- index.tsx files represent the default route for their directory.
+
+Use the route path as the "path" (e.g. "/", "/about", "/posts/$postId").
+Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (framework === "gatsby") {
-    frameworkInstructions =
-      `Analyze the following Gatsby page files and extract every screen / route.
+    frameworkInstructions = `Analyze the following Gatsby page files and extract every screen / route.
 
 For Gatsby projects (file-based routing similar to Next.js Pages Router):
 - Each file under src/pages/ represents a route. The file path maps to the URL route (e.g. src/pages/index.tsx -> /, src/pages/about.tsx -> /about, src/pages/blog/index.tsx -> /blog).
@@ -103,8 +121,7 @@ For Gatsby projects (file-based routing similar to Next.js Pages Router):
 Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (isAstro) {
-    frameworkInstructions =
-      `Analyze the following Astro page files and extract every screen / route.
+    frameworkInstructions = `Analyze the following Astro page files and extract every screen / route.
 
 For Astro projects (file-based routing):
 - Each file under src/pages/ represents a route. The file path maps to the URL route (e.g. src/pages/index.astro -> /, src/pages/about.astro -> /about, src/pages/blog/[slug].astro -> /blog/:slug).
@@ -117,13 +134,11 @@ For Astro projects (file-based routing):
 Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the .astro/.md/.mdx/.tsx/.jsx file path.`;
   } else if (isPlainHtml) {
-    frameworkInstructions =
-      `Analyze the following plain HTML files. Each HTML file represents a screen.
+    frameworkInstructions = `Analyze the following plain HTML files. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
 Set "componentFile" to the same HTML file path (without the leading "/").`;
   } else if (isAndroid) {
-    frameworkInstructions =
-      `Analyze the following Android ${framework === "android-compose-navigation" ? "Jetpack Compose Navigation" : "Navigation Component"} files and extract every screen / destination.
+    frameworkInstructions = `Analyze the following Android ${framework === "android-compose-navigation" ? "Jetpack Compose Navigation" : "Navigation Component"} files and extract every screen / destination.
 
 For Android projects, identify screens from:
 - Navigation XML: <fragment>, <dialog>, <activity> elements with android:name and android:id attributes
@@ -135,8 +150,7 @@ Use the navigation destination route string as the "path" (e.g. "home", "setting
 For Activities without navigation routes, use the class name as the path (e.g. "MainActivity", "SettingsActivity").
 Set "componentFile" to the Kotlin/Java source file path.`;
   } else if (isIOS) {
-    frameworkInstructions =
-      `Analyze the following iOS ${framework === "ios-swiftui" ? "SwiftUI" : "UIKit"} files and extract every screen / destination.
+    frameworkInstructions = `Analyze the following iOS ${framework === "ios-swiftui" ? "SwiftUI" : "UIKit"} files and extract every screen / destination.
 
 For iOS projects, identify screens from:
 - Storyboard XML: <viewController> and <scene> elements with storyboardIdentifier attributes
@@ -147,14 +161,13 @@ For iOS projects, identify screens from:
 Use the Storyboard ID, SwiftUI navigation destination value, or class name as the "path" (e.g. "HomeView", "SettingsViewController", "profileDetail").
 Set "componentFile" to the .swift, .m, or .storyboard file path.`;
   } else {
-    frameworkInstructions =
-      `Analyze the following ${framework} routing files and extract every screen / route.`;
+    frameworkInstructions = `Analyze the following ${framework} routing files and extract every screen / route.`;
   }
 
   const exampleComponentFile = isReactNative
-    ? (framework === "expo-router"
-        ? "app/(tabs)/home.tsx"
-        : "src/screens/HomeScreen.tsx")
+    ? framework === "expo-router"
+      ? "app/(tabs)/home.tsx"
+      : "src/screens/HomeScreen.tsx"
     : isFlutter
       ? "lib/screens/home_screen.dart"
       : isAstro
@@ -346,6 +359,13 @@ export function buildTurn3Prompt(
 - coordinator.navigate(to:) (Coordinator pattern)
 - TabView tab switching
 - dismiss(), navigationController?.popViewController() (back navigation)`;
+  } else if (framework === "tanstack-router") {
+    lookForItems = `- <Link to="..."/> from @tanstack/react-router
+- useNavigate() hook with navigate({ to: '...' })
+- router.navigate() programmatic navigation
+- <Navigate to="..."/> component
+- redirect() in loader or beforeLoad hooks
+- window.location / location.href assignments`;
   } else if (framework === "gatsby") {
     lookForItems = `- <Link to="..."> from "gatsby" package
 - navigate() from "gatsby" package
@@ -381,9 +401,11 @@ export function buildTurn3Prompt(
           ? `"NavigationLink", "pushViewController", "sheet"`
           : isAstro
             ? `"a href", "Astro.redirect", "window.location"`
-            : framework === "gatsby"
-              ? `"Link to", "navigate", "window.location"`
-              : `"Link", "router.push", "window.location"`;
+            : framework === "tanstack-router"
+              ? `"Link to", "navigate", "router.navigate", "redirect"`
+              : framework === "gatsby"
+                ? `"Link to", "navigate", "window.location"`
+                : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 

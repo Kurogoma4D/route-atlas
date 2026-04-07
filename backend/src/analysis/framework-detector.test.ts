@@ -119,10 +119,9 @@ describe("detectFramework", () => {
     });
 
     it("detects Gatsby from devDependencies", () => {
-      const result = detectFramework(
-        devPkg({ gatsby: "5.0.0" }),
-        ["src/pages/index.tsx"],
-      );
+      const result = detectFramework(devPkg({ gatsby: "5.0.0" }), [
+        "src/pages/index.tsx",
+      ]);
       expect(result.framework).toBe("gatsby");
     });
 
@@ -137,10 +136,10 @@ describe("detectFramework", () => {
 
   describe("Astro", () => {
     it("detects Astro from dependencies", () => {
-      const result = detectFramework(
-        pkg({ astro: "4.0.0" }),
-        ["src/pages/index.astro", "src/pages/about.astro"],
-      );
+      const result = detectFramework(pkg({ astro: "4.0.0" }), [
+        "src/pages/index.astro",
+        "src/pages/about.astro",
+      ]);
       expect(result.framework).toBe("astro");
       expect(result.routingFilePatterns).toContain(
         "src/pages/**/*.{astro,tsx,jsx,ts,js,md,mdx}",
@@ -148,10 +147,9 @@ describe("detectFramework", () => {
     });
 
     it("detects Astro from devDependencies", () => {
-      const result = detectFramework(
-        devPkg({ astro: "4.0.0" }),
-        ["src/pages/index.astro"],
-      );
+      const result = detectFramework(devPkg({ astro: "4.0.0" }), [
+        "src/pages/index.astro",
+      ]);
       expect(result.framework).toBe("astro");
     });
 
@@ -180,6 +178,43 @@ describe("detectFramework", () => {
       expect(result.framework).toBe("angular");
       expect(result.routingFilePatterns).toContain("**/*-routing.module.ts");
       expect(result.routingFilePatterns).toContain("**/app.routes.ts");
+    });
+  });
+
+  describe("TanStack Router", () => {
+    it("detects TanStack Router from dependencies", () => {
+      const result = detectFramework(
+        pkg({ react: "18.0.0", "@tanstack/react-router": "1.0.0" }),
+        ["src/routes/index.tsx", "src/routes/about.tsx"],
+      );
+      expect(result.framework).toBe("tanstack-router");
+      expect(result.routingFilePatterns).toEqual(
+        expect.arrayContaining([
+          "src/routes/**/*.{tsx,jsx,ts,js}",
+          "src/**/routeTree.gen.ts",
+          "src/**/router.{tsx,jsx,ts,js}",
+        ]),
+      );
+    });
+
+    it("detects TanStack Router from devDependencies", () => {
+      const result = detectFramework(
+        devPkg({ "@tanstack/react-router": "1.0.0" }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("tanstack-router");
+    });
+
+    it("prefers TanStack Router over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({
+          react: "18.0.0",
+          "@tanstack/react-router": "1.0.0",
+          "react-router-dom": "6.0.0",
+        }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("tanstack-router");
     });
   });
 
@@ -389,15 +424,21 @@ describe("detectFramework", () => {
 // ---------------------------------------------------------------------------
 describe("detectPlatform", () => {
   it("returns 'android' when build.gradle exists at root", () => {
-    expect(detectPlatform(["build.gradle", "app/src/main/java/Main.kt"])).toBe("android");
+    expect(detectPlatform(["build.gradle", "app/src/main/java/Main.kt"])).toBe(
+      "android",
+    );
   });
 
   it("returns 'android' when build.gradle.kts exists at root", () => {
-    expect(detectPlatform(["build.gradle.kts", "settings.gradle.kts"])).toBe("android");
+    expect(detectPlatform(["build.gradle.kts", "settings.gradle.kts"])).toBe(
+      "android",
+    );
   });
 
   it("returns 'android' when settings.gradle exists at root", () => {
-    expect(detectPlatform(["settings.gradle", "gradle.properties"])).toBe("android");
+    expect(detectPlatform(["settings.gradle", "gradle.properties"])).toBe(
+      "android",
+    );
   });
 
   it("returns 'android' when AndroidManifest.xml exists", () => {
@@ -423,7 +464,9 @@ describe("detectPlatform", () => {
   });
 
   it("returns 'android' when build.gradle.kts exists only in a subdirectory", () => {
-    expect(detectPlatform(["app/build.gradle.kts", "gradle.properties"])).toBe("android");
+    expect(detectPlatform(["app/build.gradle.kts", "gradle.properties"])).toBe(
+      "android",
+    );
   });
 
   it("ignores Gradle files in excluded directories", () => {
@@ -555,7 +598,9 @@ describe("detectAndroidFramework", () => {
 // ---------------------------------------------------------------------------
 describe("detectPlatform — iOS", () => {
   it("returns 'ios' when .xcodeproj/project.pbxproj exists", () => {
-    expect(detectPlatform(["MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"])).toBe("ios");
+    expect(
+      detectPlatform(["MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"]),
+    ).toBe("ios");
   });
 
   it("returns 'web' when only Package.swift exists (server-side Swift)", () => {
@@ -563,15 +608,28 @@ describe("detectPlatform — iOS", () => {
   });
 
   it("returns 'ios' when Package.swift exists with .xcodeproj", () => {
-    expect(detectPlatform(["Package.swift", "MyApp.xcodeproj/project.pbxproj", "Sources/main.swift"])).toBe("ios");
+    expect(
+      detectPlatform([
+        "Package.swift",
+        "MyApp.xcodeproj/project.pbxproj",
+        "Sources/main.swift",
+      ]),
+    ).toBe("ios");
   });
 
   it("returns 'ios' when Podfile exists at root", () => {
-    expect(detectPlatform(["Podfile", "MyApp/ViewController.swift"])).toBe("ios");
+    expect(detectPlatform(["Podfile", "MyApp/ViewController.swift"])).toBe(
+      "ios",
+    );
   });
 
   it("returns 'ios' when .xcworkspace/contents.xcworkspacedata exists", () => {
-    expect(detectPlatform(["MyApp.xcworkspace/contents.xcworkspacedata", "MyApp/AppDelegate.swift"])).toBe("ios");
+    expect(
+      detectPlatform([
+        "MyApp.xcworkspace/contents.xcworkspacedata",
+        "MyApp/AppDelegate.swift",
+      ]),
+    ).toBe("ios");
   });
 
   it("does not detect ios from a broad .xcworkspace substring match", () => {
@@ -580,12 +638,16 @@ describe("detectPlatform — iOS", () => {
   });
 
   it("ignores .xcodeproj in excluded directories", () => {
-    expect(detectPlatform(["Pods/SomePod.xcodeproj/project.pbxproj"])).toBe("web");
+    expect(detectPlatform(["Pods/SomePod.xcodeproj/project.pbxproj"])).toBe(
+      "web",
+    );
   });
 
   it("prefers android over ios when both indicators present", () => {
     // Android detection runs first in detectPlatform
-    expect(detectPlatform(["build.gradle", "MyApp.xcodeproj/project.pbxproj"])).toBe("android");
+    expect(
+      detectPlatform(["build.gradle", "MyApp.xcodeproj/project.pbxproj"]),
+    ).toBe("android");
   });
 });
 
@@ -843,11 +905,15 @@ describe("detectPlatform — Flutter", () => {
   });
 
   it("returns 'flutter' when pubspec.yaml and android/ dir exist", () => {
-    expect(detectPlatform(["pubspec.yaml", "android/build.gradle"])).toBe("flutter");
+    expect(detectPlatform(["pubspec.yaml", "android/build.gradle"])).toBe(
+      "flutter",
+    );
   });
 
   it("returns 'flutter' when pubspec.yaml and ios/ dir exist", () => {
-    expect(detectPlatform(["pubspec.yaml", "ios/Runner.xcodeproj/project.pbxproj"])).toBe("flutter");
+    expect(
+      detectPlatform(["pubspec.yaml", "ios/Runner.xcodeproj/project.pbxproj"]),
+    ).toBe("flutter");
   });
 
   it("returns 'web' when pubspec.yaml exists without Flutter indicators (pure Dart)", () => {
@@ -877,7 +943,9 @@ describe("detectPlatform — Flutter", () => {
   });
 
   it("returns 'android' when no pubspec.yaml exists but Gradle files do", () => {
-    expect(detectPlatform(["build.gradle", "app/src/main/AndroidManifest.xml"])).toBe("android");
+    expect(
+      detectPlatform(["build.gradle", "app/src/main/AndroidManifest.xml"]),
+    ).toBe("android");
   });
 });
 
@@ -887,25 +955,40 @@ describe("detectPlatform — Flutter", () => {
 describe("detectPlatform — React Native coexistence", () => {
   it("returns 'web' when package.json coexists with android/app/build.gradle", () => {
     expect(
-      detectPlatform(["package.json", "android/app/build.gradle", "src/App.tsx"]),
+      detectPlatform([
+        "package.json",
+        "android/app/build.gradle",
+        "src/App.tsx",
+      ]),
     ).toBe("web");
   });
 
   it("returns 'web' when package.json coexists with ios/.xcodeproj", () => {
     expect(
-      detectPlatform(["package.json", "ios/MyApp.xcodeproj/project.pbxproj", "src/App.tsx"]),
+      detectPlatform([
+        "package.json",
+        "ios/MyApp.xcodeproj/project.pbxproj",
+        "src/App.tsx",
+      ]),
     ).toBe("web");
   });
 
   it("returns 'android' for pure Android project without package.json", () => {
     expect(
-      detectPlatform(["android/app/build.gradle", "build.gradle", "settings.gradle"]),
+      detectPlatform([
+        "android/app/build.gradle",
+        "build.gradle",
+        "settings.gradle",
+      ]),
     ).toBe("android");
   });
 
   it("returns 'ios' for pure iOS project without package.json", () => {
     expect(
-      detectPlatform(["ios/MyApp.xcodeproj/project.pbxproj", "Sources/App.swift"]),
+      detectPlatform([
+        "ios/MyApp.xcodeproj/project.pbxproj",
+        "Sources/App.swift",
+      ]),
     ).toBe("ios");
   });
 });
@@ -1033,11 +1116,19 @@ describe("React Native / Expo detection", () => {
   describe("Expo Router", () => {
     it("detects expo-router when expo-router is in dependencies", () => {
       const result = detectFramework(
-        pkg({ "expo-router": "3.0.0", "react-native": "0.73.0", react: "18.0.0" }),
+        pkg({
+          "expo-router": "3.0.0",
+          "react-native": "0.73.0",
+          react: "18.0.0",
+        }),
       );
       expect(result.framework).toBe("expo-router");
-      expect(result.routingFilePatterns).toContain("app/**/_layout.{tsx,jsx,ts,js}");
-      expect(result.routingFilePatterns).toContain("app/**/index.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain(
+        "app/**/_layout.{tsx,jsx,ts,js}",
+      );
+      expect(result.routingFilePatterns).toContain(
+        "app/**/index.{tsx,jsx,ts,js}",
+      );
       expect(result.routingFilePatterns).toContain("app/**/*.{tsx,jsx,ts,js}");
     });
 
@@ -1067,12 +1158,22 @@ describe("React Native / Expo detection", () => {
   describe("React Navigation", () => {
     it("detects react-navigation when @react-navigation/native is in dependencies", () => {
       const result = detectFramework(
-        pkg({ "@react-navigation/native": "6.0.0", "react-native": "0.73.0", react: "18.0.0" }),
+        pkg({
+          "@react-navigation/native": "6.0.0",
+          "react-native": "0.73.0",
+          react: "18.0.0",
+        }),
       );
       expect(result.framework).toBe("react-navigation");
-      expect(result.routingFilePatterns).toContain("src/**/navigation/*.{tsx,jsx,ts,js}");
-      expect(result.routingFilePatterns).toContain("src/**/*Navigator.{tsx,jsx,ts,js}");
-      expect(result.routingFilePatterns).toContain("src/**/*Screen.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain(
+        "src/**/navigation/*.{tsx,jsx,ts,js}",
+      );
+      expect(result.routingFilePatterns).toContain(
+        "src/**/*Navigator.{tsx,jsx,ts,js}",
+      );
+      expect(result.routingFilePatterns).toContain(
+        "src/**/*Screen.{tsx,jsx,ts,js}",
+      );
     });
 
     it("prefers react-navigation over react-router-dom when both present", () => {
@@ -1093,12 +1194,18 @@ describe("React Native / Expo detection", () => {
         pkg({ "react-native": "0.73.0", react: "18.0.0" }),
       );
       expect(result.framework).toBe("react-navigation");
-      expect(result.routingFilePatterns).toContain("src/**/*Navigator.{tsx,jsx,ts,js}");
+      expect(result.routingFilePatterns).toContain(
+        "src/**/*Navigator.{tsx,jsx,ts,js}",
+      );
     });
 
     it("prefers react-native over react-router-dom", () => {
       const result = detectFramework(
-        pkg({ "react-native": "0.73.0", "react-router-dom": "6.0.0", react: "18.0.0" }),
+        pkg({
+          "react-native": "0.73.0",
+          "react-router-dom": "6.0.0",
+          react: "18.0.0",
+        }),
       );
       expect(result.framework).toBe("react-navigation");
     });
