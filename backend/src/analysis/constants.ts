@@ -28,6 +28,8 @@ export const EXCLUDED_DIR_PREFIXES = [
   ".gatsby/",
   ".astro/",
   ".solid/",
+  ".qwik/",
+  "server/",
 ];
 
 /**

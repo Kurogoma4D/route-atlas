@@ -309,6 +309,53 @@ describe("detectFramework", () => {
     });
   });
 
+  describe("Qwik City", () => {
+    it("detects Qwik City from @builder.io/qwik-city in dependencies", () => {
+      const result = detectFramework(
+        pkg({ "@builder.io/qwik-city": "1.5.0", "@builder.io/qwik": "1.5.0" }),
+        ["src/routes/index.tsx", "src/routes/about/index.tsx"],
+      );
+      expect(result.framework).toBe("qwik-city");
+      expect(result.routingFilePatterns).toContain(
+        "src/routes/**/index.{tsx,jsx,ts,js}",
+      );
+      expect(result.routingFilePatterns).toContain(
+        "src/routes/**/layout.{tsx,jsx,ts,js}",
+      );
+    });
+
+    it("detects Qwik City from devDependencies", () => {
+      const result = detectFramework(
+        devPkg({ "@builder.io/qwik-city": "1.5.0" }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("qwik-city");
+    });
+
+    it("prefers Qwik City over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "@builder.io/qwik-city": "1.5.0",
+          "react-router-dom": "6.0.0",
+          "@builder.io/qwik": "1.5.0",
+        }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("qwik-city");
+    });
+
+    it("prefers Qwik City over vue-router when both present", () => {
+      const result = detectFramework(
+        pkg({
+          "@builder.io/qwik-city": "1.5.0",
+          "vue-router": "4.0.0",
+        }),
+        ["src/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("qwik-city");
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // 2. Edge cases
   // ---------------------------------------------------------------------------
@@ -1345,6 +1392,14 @@ describe("isExcludedPath", () => {
 
   it("returns true for .solid paths", () => {
     expect(isExcludedPath(".solid/some-file.json")).toBe(true);
+  });
+
+  it("returns true for .qwik paths", () => {
+    expect(isExcludedPath(".qwik/some-file.json")).toBe(true);
+  });
+
+  it("returns true for server paths", () => {
+    expect(isExcludedPath("server/entry.ts")).toBe(true);
   });
 
   it("returns false for android/ paths (not globally excluded)", () => {
