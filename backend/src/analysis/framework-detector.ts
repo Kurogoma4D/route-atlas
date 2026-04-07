@@ -23,6 +23,7 @@
  * - Flutter go_router
  * - Flutter auto_route
  * - Flutter Navigator (imperative)
+ * - TanStack Router
  * - Astro
  * - Expo Router (React Native)
  * - React Navigation (React Native)
@@ -36,6 +37,7 @@ export type FrameworkName =
   | "nextjs-pages"
   | "nuxt"
   | "angular"
+  | "tanstack-router"
   | "react-router"
   | "vue-router"
   | "remix"
@@ -60,9 +62,7 @@ export interface FrameworkDetectionResult {
 
 export class UnsupportedFrameworkError extends Error {
   constructor(message?: string) {
-    super(
-      message ?? "No supported frontend framework or HTML files detected",
-    );
+    super(message ?? "No supported frontend framework or HTML files detected");
     this.name = "UnsupportedFrameworkError";
   }
 }
@@ -85,7 +85,10 @@ export type PlatformType = "web" | "android" | "ios" | "flutter";
  * Returns true when the framework name refers to an Android navigation variant.
  */
 export function isAndroidFramework(framework: string): boolean {
-  return framework === "android-navigation" || framework === "android-compose-navigation";
+  return (
+    framework === "android-navigation" ||
+    framework === "android-compose-navigation"
+  );
 }
 
 /**
@@ -154,9 +157,7 @@ export function detectPlatform(fileTree: string[]): PlatformType {
   const hasAndroidDir = fileTree.some(
     (f) => f === "android" || f.startsWith("android/"),
   );
-  const hasIOSDir = fileTree.some(
-    (f) => f === "ios" || f.startsWith("ios/"),
-  );
+  const hasIOSDir = fileTree.some((f) => f === "ios" || f.startsWith("ios/"));
   if (hasPackageJson && (hasAndroidDir || hasIOSDir)) {
     return "web";
   }
@@ -168,8 +169,10 @@ export function detectPlatform(fileTree: string[]): PlatformType {
   const hasPubspec = fileTree.some((f) => f === "pubspec.yaml");
   const hasFlutterIndicator = fileTree.some(
     (f) =>
-      f === "android" || f.startsWith("android/") ||
-      f === "ios" || f.startsWith("ios/") ||
+      f === "android" ||
+      f.startsWith("android/") ||
+      f === "ios" ||
+      f.startsWith("ios/") ||
       f === "lib/main.dart",
   );
   if (hasPubspec && hasFlutterIndicator) {
@@ -205,7 +208,8 @@ export function detectPlatform(fileTree: string[]): PlatformType {
     (f) => f.endsWith(".xcodeproj/project.pbxproj") && !isExcludedPath(f),
   );
   const hasXcworkspace = fileTree.some(
-    (f) => f.endsWith(".xcworkspace/contents.xcworkspacedata") && !isExcludedPath(f),
+    (f) =>
+      f.endsWith(".xcworkspace/contents.xcworkspacedata") && !isExcludedPath(f),
   );
   const hasPodfile = fileTree.some((f) => f === "Podfile");
 
@@ -263,8 +267,10 @@ export function detectAndroidFramework(
   const allContent = buildFileContents.map((f) => f.content).join("\n");
 
   // Check for Compose Navigation first (more specific)
-  if (allContent.includes("androidx.navigation.compose") ||
-      allContent.includes("navigation-compose")) {
+  if (
+    allContent.includes("androidx.navigation.compose") ||
+    allContent.includes("navigation-compose")
+  ) {
     return {
       framework: "android-compose-navigation",
       routingFilePatterns: ANDROID_COMPOSE_NAVIGATION_PATTERNS,
@@ -272,8 +278,10 @@ export function detectAndroidFramework(
   }
 
   // Check for standard Navigation Component (XML-based)
-  if (allContent.includes("navigation-fragment") ||
-      allContent.includes("navigation-ui")) {
+  if (
+    allContent.includes("navigation-fragment") ||
+    allContent.includes("navigation-ui")
+  ) {
     return {
       framework: "android-navigation",
       routingFilePatterns: ANDROID_NAVIGATION_PATTERNS,
@@ -428,7 +436,10 @@ export function detectFlutterFramework(
 ): FrameworkDetectionResult {
   let pubspec: PubspecYaml;
   try {
-    pubspec = (yaml.load(pubspecContent, { schema: yaml.JSON_SCHEMA }) as PubspecYaml) ?? {};
+    pubspec =
+      (yaml.load(pubspecContent, {
+        schema: yaml.JSON_SCHEMA,
+      }) as PubspecYaml) ?? {};
   } catch {
     // If YAML parsing fails, fall back to Navigator
     return {
@@ -545,9 +556,7 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     key: "astro",
     resolve: () => ({
       framework: "astro",
-      routingFilePatterns: [
-        "src/pages/**/*.{astro,tsx,jsx,ts,js,md,mdx}",
-      ],
+      routingFilePatterns: ["src/pages/**/*.{astro,tsx,jsx,ts,js,md,mdx}"],
     }),
   },
   {
@@ -569,6 +578,17 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     resolve: () => ({
       framework: "sveltekit",
       routingFilePatterns: ["src/routes/**/+page.svelte"],
+    }),
+  },
+  {
+    key: "@tanstack/react-router",
+    resolve: () => ({
+      framework: "tanstack-router" as const,
+      routingFilePatterns: [
+        "src/routes/**/*.{tsx,jsx,ts,js}",
+        "src/**/routeTree.gen.ts",
+        "src/**/router.{tsx,jsx,ts,js}",
+      ],
     }),
   },
   {
@@ -598,10 +618,18 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
  */
 function resolveNextJs(fileTree: string[]): FrameworkDetectionResult {
   const hasAppDir = fileTree.some(
-    (f) => f === "app" || f.startsWith("app/") || f === "src/app" || f.startsWith("src/app/"),
+    (f) =>
+      f === "app" ||
+      f.startsWith("app/") ||
+      f === "src/app" ||
+      f.startsWith("src/app/"),
   );
   const hasPagesDir = fileTree.some(
-    (f) => f === "pages" || f.startsWith("pages/") || f === "src/pages" || f.startsWith("src/pages/"),
+    (f) =>
+      f === "pages" ||
+      f.startsWith("pages/") ||
+      f === "src/pages" ||
+      f.startsWith("src/pages/"),
   );
 
   if (hasAppDir) {
