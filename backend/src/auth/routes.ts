@@ -61,6 +61,7 @@ export async function exchangeCodeForToken(
   };
 
   if (data.error || !data.access_token) {
+    console.error("[OAuth] Token exchange failed:", JSON.stringify(data));
     throw new Error(
       data.error_description ?? data.error ?? "Failed to exchange code",
     );
@@ -198,9 +199,14 @@ export function createAuthRouter(): Hono {
       c.set("session", session);
 
       return c.redirect("/");
-    } catch {
+    } catch (err) {
+      console.error("[OAuth] Callback error:", err);
       c.set("session", session);
-      return c.redirect("/login?error=token_exchange_failed");
+      const detail =
+        err instanceof Error ? err.message : "unknown";
+      return c.redirect(
+        `/login?error=token_exchange_failed&detail=${encodeURIComponent(detail)}`,
+      );
     }
   });
 
