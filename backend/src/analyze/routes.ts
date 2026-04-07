@@ -1,15 +1,17 @@
 /**
- * Analysis API Routes (SSE Progress)
+ * Analysis API Routes (Polling-based Progress)
  *
- * POST /api/analyze              — Start an analysis job, returns { jobId }
- * GET  /api/analyze/:jobId        — SSE stream for progress events
- * GET  /api/analyze/:jobId/result — Retrieve completed analysis result as JSON
+ * POST /api/analyze              — Enqueue an analysis job, returns { jobId }
+ * GET  /api/analyze/:jobId        — Read job state from KV, return JSON
+ * GET  /api/analyze/:jobId/result — Return result when complete
+ *
+ * The analysis pipeline runs either via a Cloudflare Queue consumer
+ * or inline (for local dev without Queues).
  *
  * Reference: SPEC.md §6.1, §6.2, §6.3
  */
 
 import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
 import { decrypt } from "../auth/crypto.js";
 import {
   detectFramework,
@@ -41,9 +43,31 @@ import {
 } from "../analysis/analysis-pipeline.js";
 import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
-import { JobManager } from "./job-manager.js";
-import type { SSEWriter } from "./job-manager.js";
+import { JobStore, getInMemoryJobKV } from "./job-store.js";
+import type { KVLike } from "../auth/session.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
+
+// ---------------------------------------------------------------------------
+// Queue message shape
+// ---------------------------------------------------------------------------
+
+export interface AnalyzeQueueMessage {
+  jobId: string;
+  userId: string;
+  owner: string;
+  repo: string;
+  branch: string;
+  model: SupportedModel;
+  encryptedToken: string;
+}
+
+// ---------------------------------------------------------------------------
+// Minimal Queue interface for type safety
+// ---------------------------------------------------------------------------
+
+export interface QueueLike {
+  send(message: AnalyzeQueueMessage): Promise<void>;
+}
 
 // ---------------------------------------------------------------------------
 // Request body shape
@@ -62,15 +86,35 @@ interface AnalyzeRequestBody {
 
 export interface AnalyzeRouterDeps {
   clientManager: CopilotClientManager;
-  jobManager?: JobManager;
+  jobStore?: JobStore;
+  queue?: QueueLike;
+  jobsKV?: KVLike;
+}
+
+/**
+ * Resolve a JobStore for the current request.
+ * Prefers the JOBS KV binding from the Workers env, then explicit deps,
+ * and falls back to an in-memory store for local dev.
+ */
+function resolveJobStore(
+  c: { env: unknown },
+  deps: AnalyzeRouterDeps,
+): JobStore {
+  const envKV = (c.env as Record<string, unknown> | null)?.["JOBS"] as
+    | KVLike
+    | undefined;
+  if (envKV) return new JobStore(envKV);
+  if (deps.jobStore) return deps.jobStore;
+  const kv = deps.jobsKV ?? getInMemoryJobKV();
+  return new JobStore(kv);
 }
 
 export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
   const router = new Hono();
-  const jobManager = deps.jobManager ?? new JobManager();
 
   // POST /api/analyze — Start analysis job
   router.post("/", async (c) => {
+    const jobStore = resolveJobStore(c, deps);
     let body: AnalyzeRequestBody;
     try {
       body = (await c.req.json()) as AnalyzeRequestBody;
@@ -103,7 +147,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
 
     const session = c.get("session");
     const userId = session.user!.login;
-    const jobId = jobManager.createJob(userId);
+    const jobId = await jobStore.createJob(userId);
 
     if (jobId === null) {
       return c.json(
@@ -116,8 +160,14 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
       );
     }
 
-    // Run the pipeline in the background
-    runPipeline({
+    // Try to enqueue via Cloudflare Queue binding; fall back to inline execution
+    const queue: QueueLike | undefined =
+      deps.queue ??
+      ((c.env as Record<string, unknown>)?.["ANALYZE_QUEUE"] as
+        | QueueLike
+        | undefined);
+
+    const message: AnalyzeQueueMessage = {
       jobId,
       userId,
       owner: body.owner,
@@ -125,23 +175,48 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
       branch: body.branch,
       model,
       encryptedToken: session.encryptedToken!,
-      jobManager,
-      clientManager: deps.clientManager,
-    }).catch((err) => {
-      console.error(
-        `[analyze] Unhandled pipeline error for job ${jobId}:`,
-        err,
-      );
-    });
+    };
+
+    if (queue) {
+      // Cloudflare Queue available — enqueue and return immediately
+      try {
+        await queue.send(message);
+      } catch (err) {
+        console.error(`[analyze] Failed to enqueue job ${jobId}:`, err);
+        await jobStore
+          .sendError(jobId, "Failed to enqueue analysis job")
+          .catch(console.error);
+        return c.json(
+          {
+            error: "queue_error",
+            message: "Failed to enqueue analysis job. Please try again later.",
+          },
+          500,
+        );
+      }
+    } else {
+      // No queue binding (local dev) — run pipeline inline in background
+      runPipeline({
+        ...message,
+        jobStore,
+        clientManager: deps.clientManager,
+      }).catch((err) => {
+        console.error(
+          `[analyze] Unhandled pipeline error for job ${jobId}:`,
+          err,
+        );
+      });
+    }
 
     // Return jobId immediately
     return c.json({ jobId }, 202);
   });
 
   // GET /api/analyze/:jobId/result — Retrieve completed analysis result
-  router.get("/:jobId/result", (c) => {
+  router.get("/:jobId/result", async (c) => {
+    const jobStore = resolveJobStore(c, deps);
     const jobId = c.req.param("jobId");
-    const job = jobManager.getJob(jobId);
+    const job = await jobStore.getJob(jobId);
 
     if (!job) {
       return c.json(
@@ -179,10 +254,11 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
     return c.json(job.result);
   });
 
-  // GET /api/analyze/:jobId — SSE stream
-  router.get("/:jobId", (c) => {
+  // GET /api/analyze/:jobId — Poll job state (JSON)
+  router.get("/:jobId", async (c) => {
+    const jobStore = resolveJobStore(c, deps);
     const jobId = c.req.param("jobId");
-    const job = jobManager.getJob(jobId);
+    const job = await jobStore.getJob(jobId);
 
     if (!job) {
       return c.json(
@@ -207,66 +283,39 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
       );
     }
 
-    // If job already completed, send the result immediately
-    if (job.status === "complete" && job.result) {
-      return streamSSE(c, async (stream) => {
-        await stream.writeSSE({
-          event: "complete",
-          data: JSON.stringify(job.result),
-        });
-      });
-    }
-
-    // If job already errored, send the error immediately
-    if (job.status === "error" && job.error) {
-      return streamSSE(c, async (stream) => {
-        await stream.writeSSE({
-          event: "error",
-          data: JSON.stringify({ message: job.error }),
-        });
-      });
-    }
-
-    // Register the SSE connection using the raw response writer
-    return streamSSE(c, async (stream) => {
-      // Create a response-like object for the job manager
-      const sseWriter: SSEWriter = {
-        write: (chunk: string) => {
-          // Parse the SSE format and re-emit via stream
-          stream.write(chunk);
-          return true;
-        },
-        end: () => {
-          stream.close();
-        },
-      };
-
-      jobManager.addConnection(jobId, sseWriter);
-
-      // Wait for the stream to be aborted (client disconnect or job complete)
-      await new Promise<void>((resolve) => {
-        stream.onAbort(() => {
-          jobManager.removeConnection(jobId, sseWriter);
-          resolve();
-        });
-
-        // Also resolve when job completes (connection will be closed by jobManager)
-        const checkInterval = setInterval(() => {
-          const currentJob = jobManager.getJob(jobId);
-          if (
-            !currentJob ||
-            currentJob.status === "complete" ||
-            currentJob.status === "error"
-          ) {
-            clearInterval(checkInterval);
-            resolve();
-          }
-        }, 100);
-      });
+    // Return job state without the full result to keep polling responses small.
+    // The result is available via GET /:jobId/result when status is "complete".
+    return c.json({
+      status: job.status,
+      step: job.step,
+      message: job.message,
+      ...(job.error ? { error: job.error } : {}),
     });
   });
 
   return router;
+}
+
+// ---------------------------------------------------------------------------
+// Queue consumer: processes analysis tasks from the queue
+// ---------------------------------------------------------------------------
+
+export async function handleAnalyzeQueue(
+  message: AnalyzeQueueMessage,
+  jobStore: JobStore,
+  clientManager: CopilotClientManager,
+): Promise<void> {
+  try {
+    await runPipeline({
+      ...message,
+      jobStore,
+      clientManager,
+    });
+  } catch (err) {
+    console.error(`[queue] Pipeline failed for job ${message.jobId}:`, err);
+    const errorMsg = err instanceof Error ? err.message : "Analysis failed";
+    await jobStore.sendError(message.jobId, errorMsg).catch(console.error);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -281,7 +330,7 @@ interface PipelineParams {
   branch: string;
   model: SupportedModel;
   encryptedToken: string;
-  jobManager: JobManager;
+  jobStore: JobStore;
   clientManager: CopilotClientManager;
 }
 
@@ -294,7 +343,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     branch,
     model,
     encryptedToken,
-    jobManager,
+    jobStore,
     clientManager,
   } = params;
 
@@ -302,7 +351,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const token = await decrypt(encryptedToken);
 
     // Step 1: Detect framework
-    jobManager.sendProgress(jobId, {
+    await jobStore.sendProgress(jobId, {
       step: "detecting_framework",
       message: "フレームワークを検出中...",
     });
@@ -399,7 +448,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
           try {
             packageJson = JSON.parse(pkgContents[0].content) as PackageJson;
           } catch {
-            jobManager.sendError(
+            await jobStore.sendError(
               jobId,
               "package.json contains invalid JSON and could not be parsed",
             );
@@ -414,7 +463,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const { framework, routingFilePatterns } = detectionResult;
 
     // Step 2: Fetch files
-    jobManager.sendProgress(jobId, {
+    await jobStore.sendProgress(jobId, {
       step: "fetching_files",
       message: "ファイルを取得中...",
     });
@@ -484,7 +533,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     );
 
     // Step 3: Analyze routes (Turn 1)
-    jobManager.sendProgress(jobId, {
+    await jobStore.sendProgress(jobId, {
       step: "analyzing_routes",
       message: "ルートを解析中...",
     });
@@ -499,12 +548,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       model,
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {
-          jobManager.sendProgress(jobId, {
+          // Fire-and-forget: KV write runs in background
+          void jobStore.sendProgress(jobId, {
             step: "analyzing_variants",
             message: "バリエーションを解析中...",
           });
         } else if (stage === "analyzing_transitions") {
-          jobManager.sendProgress(jobId, {
+          void jobStore.sendProgress(jobId, {
             step: "analyzing_transitions",
             message: "画面遷移を解析中...",
           });
@@ -512,11 +562,11 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       },
     });
 
-    // Send complete event
-    jobManager.sendComplete(jobId, result);
+    // Mark complete
+    await jobStore.sendComplete(jobId, result);
   } catch (err) {
     const message =
       err instanceof Error ? err.message : "Analysis failed unexpectedly";
-    jobManager.sendError(jobId, message);
+    await jobStore.sendError(jobId, message);
   }
 }

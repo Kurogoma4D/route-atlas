@@ -1,17 +1,33 @@
 import { createApp } from "./server.js";
 import { CopilotClientManager } from "./analysis/copilot-client.js";
-import { JobManager } from "./analyze/job-manager.js";
+import { JobStore } from "./analyze/job-store.js";
+import { handleAnalyzeQueue } from "./analyze/routes.js";
+import type { AnalyzeQueueMessage } from "./analyze/routes.js";
 
-const app = createApp({
-  clientManager: new CopilotClientManager(),
-  jobManager: new JobManager(),
-});
+const clientManager = new CopilotClientManager();
+
+const app = createApp({ clientManager });
 
 // ---------------------------------------------------------------------------
 // Cloudflare Workers entry point
 // ---------------------------------------------------------------------------
 export default {
   fetch: app.fetch,
+
+  /**
+   * Queue consumer handler.
+   * Cloudflare Workers will call this when messages arrive on ANALYZE_QUEUE.
+   */
+  async queue(
+    batch: MessageBatch<AnalyzeQueueMessage>,
+    env: { JOBS: KVNamespace },
+  ) {
+    const store = new JobStore(env.JOBS);
+    for (const msg of batch.messages) {
+      await handleAnalyzeQueue(msg.body, store, clientManager);
+      msg.ack();
+    }
+  },
 };
 
 // ---------------------------------------------------------------------------

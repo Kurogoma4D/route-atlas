@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createApp } from "../server.js";
-import { JobManager } from "./job-manager.js";
+import { JobStore, getInMemoryJobKV, resetInMemoryJobKV } from "./job-store.js";
 import { CopilotClientManager } from "../analysis/copilot-client.js";
 import { resetInMemoryKV } from "../auth/session.js";
 import type { LLMAdapter } from "../analysis/copilot-client.js";
+import type { KVLike } from "../auth/session.js";
 import type { Hono } from "hono";
-import type { SSEWriter } from "./job-manager.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -247,7 +247,8 @@ async function authenticateAgent2(app: Hono): Promise<Record<string, string>> {
 
 describe("Analysis API routes", () => {
   let app: Hono;
-  let jobManager: JobManager;
+  let jobStore: JobStore;
+  let jobsKV: KVLike;
   let clientManager: CopilotClientManager;
 
   beforeEach(() => {
@@ -256,15 +257,17 @@ describe("Analysis API routes", () => {
     vi.stubEnv("SESSION_SECRET", "test-session-secret");
     mockFetch.mockReset();
 
-    jobManager = new JobManager(60000);
+    resetInMemoryJobKV();
+    jobsKV = getInMemoryJobKV();
+    jobStore = new JobStore(jobsKV);
     clientManager = new CopilotClientManager(() => createMockAdapter());
-    app = createApp({ clientManager, jobManager });
+    app = createApp({ clientManager, jobStore, jobsKV });
   });
 
   afterEach(() => {
-    jobManager.clear();
     clientManager.clear();
     resetInMemoryKV();
+    resetInMemoryJobKV();
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
@@ -309,22 +312,23 @@ describe("Analysis API routes", () => {
       expect(typeof body.jobId).toBe("string");
     });
 
-    it("creates a job in the job manager", async () => {
+    it("creates a job in the job store", async () => {
       const jar = await authenticateAgent(app);
 
-      expect(jobManager.size).toBe(0);
-
-      await requestWithCookies(app, "/api/analyze", jar, {
+      const res = await requestWithCookies(app, "/api/analyze", jar, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
       });
 
-      expect(jobManager.size).toBe(1);
+      const { jobId } = await res.json();
+      const job = await jobStore.getJob(jobId);
+      expect(job).toBeDefined();
+      expect(job).not.toBeNull();
     });
   });
 
-  describe("GET /api/analyze/:jobId", () => {
+  describe("GET /api/analyze/:jobId (polling)", () => {
     it("returns 401 when not authenticated", async () => {
       const res = await app.request("/api/analyze/some-job-id");
       expect(res.status).toBe(401);
@@ -359,6 +363,67 @@ describe("Analysis API routes", () => {
       expect(res.status).toBe(403);
       const body = await res.json();
       expect(body).toHaveProperty("error", "forbidden");
+    });
+
+    it("returns job status JSON for pending job", async () => {
+      const jar = await authenticateAgent(app);
+
+      // Create a job directly via store
+      const jobId = await jobStore.createJob("testuser");
+      expect(jobId).not.toBeNull();
+
+      const res = await requestWithCookies(app, `/api/analyze/${jobId}`, jar);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty("status", "pending");
+      expect(body).toHaveProperty("step");
+      expect(body).toHaveProperty("message");
+    });
+
+    it("returns running status with step info", async () => {
+      const jar = await authenticateAgent(app);
+
+      const jobId = await jobStore.createJob("testuser");
+      await jobStore.sendProgress(jobId!, {
+        step: "detecting_framework",
+        message: "Detecting...",
+      });
+
+      const res = await requestWithCookies(app, `/api/analyze/${jobId}`, jar);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty("status", "running");
+      expect(body).toHaveProperty("step", "detecting_framework");
+      expect(body).toHaveProperty("message", "Detecting...");
+    });
+
+    it("returns complete status", async () => {
+      const jar = await authenticateAgent(app);
+
+      const jobId = await jobStore.createJob("testuser");
+      await jobStore.sendComplete(jobId!, {
+        framework: "nextjs-app",
+        screens: [],
+        transitions: [],
+      });
+
+      const res = await requestWithCookies(app, `/api/analyze/${jobId}`, jar);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty("status", "complete");
+    });
+
+    it("returns error status with error message", async () => {
+      const jar = await authenticateAgent(app);
+
+      const jobId = await jobStore.createJob("testuser");
+      await jobStore.sendError(jobId!, "Something failed");
+
+      const res = await requestWithCookies(app, `/api/analyze/${jobId}`, jar);
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty("status", "error");
+      expect(body).toHaveProperty("error", "Something failed");
     });
   });
 
@@ -402,14 +467,8 @@ describe("Analysis API routes", () => {
     it("returns 409 when job is not complete", async () => {
       const jar = await authenticateAgent(app);
 
-      // Create a job directly via jobManager so we control its state
-      const jobId = jobManager.createJob("testuser");
+      const jobId = await jobStore.createJob("testuser");
       expect(jobId).not.toBeNull();
-
-      // Job starts in "pending" state
-      const job = jobManager.getJob(jobId!);
-      expect(job).toBeDefined();
-      expect(job!.status).toBe("pending");
 
       const res = await requestWithCookies(
         app,
@@ -424,19 +483,13 @@ describe("Analysis API routes", () => {
     it("returns analysis result when job is complete", async () => {
       const jar = await authenticateAgent(app);
 
-      // Create a job directly and mark it complete with a known result
-      const jobId = jobManager.createJob("testuser");
+      const jobId = await jobStore.createJob("testuser");
       expect(jobId).not.toBeNull();
-      jobManager.sendComplete(jobId!, {
+      await jobStore.sendComplete(jobId!, {
         framework: "nextjs-app",
         screens: [],
         transitions: [],
       });
-
-      // Verify precondition
-      const job = jobManager.getJob(jobId!);
-      expect(job).toBeDefined();
-      expect(job!.status).toBe("complete");
 
       const res = await requestWithCookies(
         app,
@@ -451,11 +504,10 @@ describe("Analysis API routes", () => {
     });
   });
 
-  describe("SSE integration", () => {
-    it("streams progress events and complete event in order", async () => {
+  describe("Pipeline integration", () => {
+    it("pipeline completes and result is available via polling", async () => {
       const jar = await authenticateAgent(app);
 
-      // Create a job
       const postRes = await requestWithCookies(app, "/api/analyze", jar, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -463,34 +515,33 @@ describe("Analysis API routes", () => {
       });
       const { jobId } = await postRes.json();
 
-      // Wait a bit for the background pipeline to run
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Wait for the background pipeline to run
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
-      // At this point the job should be complete (mocked pipeline is fast)
-      const job = jobManager.getJob(jobId);
-      expect(job).toBeDefined();
+      // Poll the job status
+      const pollRes = await requestWithCookies(
+        app,
+        `/api/analyze/${jobId}`,
+        jar,
+      );
+      expect(pollRes.status).toBe(200);
+      const pollBody = await pollRes.json();
+      expect(pollBody.status).toBe("complete");
 
-      // Connect as SSE — since the job is already complete, we should get
-      // the complete event immediately
-      if (job!.status === "complete") {
-        const sseRes = await requestWithCookies(
-          app,
-          `/api/analyze/${jobId}`,
-          jar,
-          {
-            headers: { Accept: "text/event-stream" },
-          },
-        );
-
-        expect(sseRes.status).toBe(200);
-        const text = await sseRes.text();
-        expect(text).toContain("event: complete");
-        expect(text).toContain('"framework":"nextjs-app"');
-        expect(text).toContain('"screens"');
-      }
+      // Fetch the result
+      const resultRes = await requestWithCookies(
+        app,
+        `/api/analyze/${jobId}/result`,
+        jar,
+      );
+      expect(resultRes.status).toBe(200);
+      const result = await resultRes.json();
+      expect(result).toHaveProperty("framework", "nextjs-app");
+      expect(result).toHaveProperty("screens");
+      expect(result).toHaveProperty("transitions");
     });
 
-    it("sends error event when pipeline fails", async () => {
+    it("reports error when pipeline fails", async () => {
       // Create an app with a failing adapter
       const failingClientManager = new CopilotClientManager(() => ({
         chatCompletion: vi
@@ -499,10 +550,13 @@ describe("Analysis API routes", () => {
         dispose: vi.fn(),
       }));
 
-      const failingJobManager = new JobManager(60000);
+      resetInMemoryJobKV();
+      const failingJobsKV = getInMemoryJobKV();
+      const failingJobStore = new JobStore(failingJobsKV);
       const failingApp = createApp({
         clientManager: failingClientManager,
-        jobManager: failingJobManager,
+        jobStore: failingJobStore,
+        jobsKV: failingJobsKV,
       });
 
       const jar = await authenticateAgent(failingApp);
@@ -524,53 +578,18 @@ describe("Analysis API routes", () => {
       const { jobId } = await postRes.json();
 
       // Wait for the pipeline to fail
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const job = failingJobManager.getJob(jobId);
-      expect(job).toBeDefined();
-      expect(job!.status).toBe("error");
-      expect(job!.error).toContain("LLM service unavailable");
-
-      // SSE should return error event
-      const sseRes = await requestWithCookies(
+      const pollRes = await requestWithCookies(
         failingApp,
         `/api/analyze/${jobId}`,
         jar,
-        {
-          headers: { Accept: "text/event-stream" },
-        },
       );
+      const pollBody = await pollRes.json();
+      expect(pollBody.status).toBe("error");
+      expect(pollBody.error).toContain("LLM service unavailable");
 
-      expect(sseRes.status).toBe(200);
-      const text = await sseRes.text();
-      expect(text).toContain("event: error");
-      expect(text).toContain("LLM service unavailable");
-
-      failingJobManager.clear();
       failingClientManager.clear();
-    });
-
-    it("complete event contains valid AnalysisResult JSON", async () => {
-      const jar = await authenticateAgent(app);
-
-      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
-      });
-      const { jobId } = await postRes.json();
-
-      // Wait for pipeline
-      await new Promise((resolve) => setTimeout(resolve, 200));
-
-      const job = jobManager.getJob(jobId);
-      if (job?.status === "complete" && job.result) {
-        expect(job.result).toHaveProperty("framework", "nextjs-app");
-        expect(job.result).toHaveProperty("screens");
-        expect(job.result).toHaveProperty("transitions");
-        expect(Array.isArray(job.result.screens)).toBe(true);
-        expect(Array.isArray(job.result.transitions)).toBe(true);
-      }
     });
   });
 
@@ -602,7 +621,7 @@ describe("Analysis API routes", () => {
       // Wait for background pipeline
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const job = jobManager.getJob(jobId);
+      const job = await jobStore.getJob(jobId);
       expect(job).toBeDefined();
       expect(job!.status).toBe("complete");
       expect(detectAndroidFrameworkMock).toHaveBeenCalled();
@@ -640,7 +659,7 @@ describe("Analysis API routes", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const job = jobManager.getJob(jobId);
+      const job = await jobStore.getJob(jobId);
       expect(job).toBeDefined();
       expect(job!.status).toBe("complete");
       expect(detectFlutterFrameworkMock).toHaveBeenCalled();
@@ -672,77 +691,61 @@ describe("Analysis API routes", () => {
 
       await new Promise((resolve) => setTimeout(resolve, 300));
 
-      const job = jobManager.getJob(jobId);
+      const job = await jobStore.getJob(jobId);
       expect(job).toBeDefined();
       expect(job!.status).toBe("complete");
       expect(detectiOSFrameworkMock).toHaveBeenCalled();
     });
   });
 
-  describe("SSE event order verification", () => {
-    it("progress events precede the complete event", async () => {
-      // We'll manually drive the job manager to verify event ordering
-      const testJobManager = new JobManager(60000);
-      const jobId = testJobManager.createJob("testuser");
+  describe("Job state progression", () => {
+    it("job state progresses from pending through running to complete", async () => {
+      const jobId = await jobStore.createJob("testuser");
+      expect(jobId).not.toBeNull();
 
-      // Create a mock SSE writer
-      const written: string[] = [];
-      const mockWriter: SSEWriter = {
-        write: vi.fn((chunk: string) => {
-          written.push(chunk);
-          return true;
-        }),
-        end: vi.fn(),
-      };
+      // Initial state
+      let job = await jobStore.getJob(jobId!);
+      expect(job!.status).toBe("pending");
 
-      testJobManager.addConnection(jobId!, mockWriter);
-
-      // Send progress events in order
-      testJobManager.sendProgress(jobId!, {
+      // Progress updates
+      await jobStore.sendProgress(jobId!, {
         step: "detecting_framework",
         message: "Detecting...",
       });
-      testJobManager.sendProgress(jobId!, {
+      job = await jobStore.getJob(jobId!);
+      expect(job!.status).toBe("running");
+      expect(job!.step).toBe("detecting_framework");
+
+      await jobStore.sendProgress(jobId!, {
         step: "fetching_files",
         message: "Fetching...",
       });
-      testJobManager.sendProgress(jobId!, {
+      job = await jobStore.getJob(jobId!);
+      expect(job!.step).toBe("fetching_files");
+
+      await jobStore.sendProgress(jobId!, {
         step: "analyzing_routes",
         message: "Analyzing routes...",
       });
-      testJobManager.sendProgress(jobId!, {
+      await jobStore.sendProgress(jobId!, {
         step: "analyzing_variants",
         message: "Analyzing variants...",
       });
-      testJobManager.sendProgress(jobId!, {
+      await jobStore.sendProgress(jobId!, {
         step: "analyzing_transitions",
         message: "Analyzing transitions...",
       });
-      testJobManager.sendComplete(jobId!, {
+
+      // Complete
+      await jobStore.sendComplete(jobId!, {
         framework: "nextjs-app",
         screens: [],
         transitions: [],
       });
 
-      // Verify order
-      expect(written).toHaveLength(6);
-      expect(written[0]).toContain("event: progress");
-      expect(written[0]).toContain("detecting_framework");
-      expect(written[1]).toContain("event: progress");
-      expect(written[1]).toContain("fetching_files");
-      expect(written[2]).toContain("event: progress");
-      expect(written[2]).toContain("analyzing_routes");
-      expect(written[3]).toContain("event: progress");
-      expect(written[3]).toContain("analyzing_variants");
-      expect(written[4]).toContain("event: progress");
-      expect(written[4]).toContain("analyzing_transitions");
-      expect(written[5]).toContain("event: complete");
-      expect(written[5]).toContain("nextjs-app");
-
-      // Verify connection was closed after complete
-      expect(mockWriter.end).toHaveBeenCalled();
-
-      testJobManager.clear();
+      job = await jobStore.getJob(jobId!);
+      expect(job!.status).toBe("complete");
+      expect(job!.result).toHaveProperty("framework", "nextjs-app");
     });
   });
 });

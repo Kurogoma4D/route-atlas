@@ -5,13 +5,14 @@ import {
   provideHttpClientTesting,
 } from "@angular/common/http/testing";
 import { vi } from "vitest";
-import { AnalyzeService, SseEvent } from "./analyze.service";
+import { AnalyzeService, AnalysisEvent } from "./analyze.service";
 
 describe("AnalyzeService", () => {
   let service: AnalyzeService;
   let httpTesting: HttpTestingController;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     TestBed.configureTestingModule({
       providers: [provideHttpClient(), provideHttpClientTesting()],
     });
@@ -20,6 +21,7 @@ describe("AnalyzeService", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     httpTesting.verify();
   });
 
@@ -68,146 +70,183 @@ describe("AnalyzeService", () => {
     });
   });
 
-  describe("connectToJob", () => {
-    let mockEventSource: {
-      addEventListener: ReturnType<typeof vi.fn>;
-      close: ReturnType<typeof vi.fn>;
-      onerror: ((ev: Event) => void) | null;
-    };
-    let listeners: Record<string, (event: MessageEvent) => void>;
-    let originalEventSource: typeof EventSource;
+  describe("pollJob", () => {
+    it("should emit progress events while polling", () => {
+      const events: AnalysisEvent[] = [];
+      const sub = service.pollJob("job-1").subscribe({
+        next: (event) => events.push(event),
+      });
 
-    beforeEach(() => {
-      originalEventSource = globalThis.EventSource;
-      listeners = {};
-      mockEventSource = {
-        addEventListener: vi
-          .fn()
-          .mockImplementation(
-            (type: string, handler: (event: MessageEvent) => void) => {
-              listeners[type] = handler;
-            },
-          ),
-        close: vi.fn(),
-        onerror: null,
-      };
+      // timer(0, ...) fires immediately with fakeTimers after advanceTimersByTime(0)
+      vi.advanceTimersByTime(0);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (globalThis as any).EventSource = function () {
-        return mockEventSource;
-      };
-    });
+      const req1 = httpTesting.expectOne("/api/analyze/job-1");
+      req1.flush({
+        status: "running",
+        step: "fetching_files",
+        message: "Fetching...",
+      });
 
-    afterEach(() => {
-      globalThis.EventSource = originalEventSource;
-      vi.restoreAllMocks();
-    });
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe("progress");
+      if (events[0].type === "progress") {
+        expect(events[0].data.step).toBe("fetching_files");
+        expect(events[0].data.message).toBe("Fetching...");
+      }
 
-    it("should parse and emit progress events", () =>
-      new Promise<void>((resolve) => {
-        const events: SseEvent[] = [];
-        service.connectToJob("job-1").subscribe({
-          next: (event) => events.push(event),
-          complete: () => {
-            expect(events.length).toBe(2);
-            expect(events[0].type).toBe("progress");
-            if (events[0].type === "progress") {
-              expect(events[0].data.step).toBe("fetching_files");
-              expect(events[0].data.message).toBe("Fetching...");
-            }
-            resolve();
-          },
-        });
-
-        listeners["progress"](
-          new MessageEvent("progress", {
-            data: JSON.stringify({
-              step: "fetching_files",
-              message: "Fetching...",
-            }),
-          }),
-        );
-
-        // Trigger complete to finish the observable
-        listeners["complete"](
-          new MessageEvent("complete", {
-            data: JSON.stringify({ routes: [] }),
-          }),
-        );
-      }));
-
-    it("should close EventSource and complete observable on complete event", () =>
-      new Promise<void>((resolve) => {
-        service.connectToJob("job-2").subscribe({
-          next: (event) => {
-            expect(event.type).toBe("complete");
-          },
-          complete: () => {
-            // close() is called in the finally block after subscriber.complete(),
-            // so we verify it on the next microtask.
-            queueMicrotask(() => {
-              expect(mockEventSource.close).toHaveBeenCalled();
-              resolve();
-            });
-          },
-        });
-
-        listeners["complete"](
-          new MessageEvent("complete", {
-            data: JSON.stringify({ result: "ok" }),
-          }),
-        );
-      }));
-
-    it("should close EventSource and complete observable on error event", () =>
-      new Promise<void>((resolve) => {
-        const events: SseEvent[] = [];
-        service.connectToJob("job-3").subscribe({
-          next: (event) => events.push(event),
-          complete: () => {
-            expect(mockEventSource.close).toHaveBeenCalled();
-            expect(events.length).toBe(1);
-            expect(events[0].type).toBe("error");
-            if (events[0].type === "error") {
-              expect(events[0].data.message).toBe("Something went wrong");
-            }
-            resolve();
-          },
-        });
-
-        listeners["error"](
-          new MessageEvent("error", {
-            data: JSON.stringify({ message: "Something went wrong" }),
-          }),
-        );
-      }));
-
-    it("should close EventSource on unsubscribe", () => {
-      const sub = service.connectToJob("job-4").subscribe();
       sub.unsubscribe();
-      expect(mockEventSource.close).toHaveBeenCalled();
     });
 
-    it("should handle native connection errors via onerror", () =>
-      new Promise<void>((resolve) => {
-        const events: SseEvent[] = [];
-        service.connectToJob("job-5").subscribe({
-          next: (event) => events.push(event),
-          complete: () => {
-            expect(mockEventSource.close).toHaveBeenCalled();
-            expect(events.length).toBe(1);
-            expect(events[0].type).toBe("error");
-            if (events[0].type === "error") {
-              expect(events[0].data.message).toBe(
-                "Connection to analysis server lost",
-              );
-            }
-            resolve();
-          },
-        });
+    it("should fetch result and emit complete when status is complete", () => {
+      const events: AnalysisEvent[] = [];
+      service.pollJob("job-2").subscribe({
+        next: (event) => events.push(event),
+      });
 
-        // Simulate native connection error
-        mockEventSource.onerror!(new Event("error"));
-      }));
+      vi.advanceTimersByTime(0);
+
+      // First poll returns complete
+      const pollReq = httpTesting.expectOne("/api/analyze/job-2");
+      pollReq.flush({
+        status: "complete",
+        step: "complete",
+        message: "Done",
+      });
+
+      // Service should then fetch the result
+      const resultReq = httpTesting.expectOne("/api/analyze/job-2/result");
+      resultReq.flush({ routes: [] });
+
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe("complete");
+      expect(events[0].data).toEqual({ routes: [] });
+    });
+
+    it("should emit error when job status is error", () => {
+      const events: AnalysisEvent[] = [];
+      service.pollJob("job-3").subscribe({
+        next: (event) => events.push(event),
+      });
+
+      vi.advanceTimersByTime(0);
+
+      const req = httpTesting.expectOne("/api/analyze/job-3");
+      req.flush({
+        status: "error",
+        step: "error",
+        message: "Something went wrong",
+        error: "Something went wrong",
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe("error");
+      if (events[0].type === "error") {
+        expect(events[0].data.message).toBe("Something went wrong");
+      }
+    });
+
+    it("should stop polling on unsubscribe", () => {
+      const sub = service.pollJob("job-4").subscribe();
+
+      vi.advanceTimersByTime(0);
+
+      // First poll
+      const req = httpTesting.expectOne("/api/analyze/job-4");
+      req.flush({
+        status: "running",
+        step: "detecting_framework",
+        message: "Detecting...",
+      });
+
+      sub.unsubscribe();
+
+      // Advance timer — no more requests should be made
+      vi.advanceTimersByTime(3000);
+      httpTesting.expectNone("/api/analyze/job-4");
+    });
+
+    it("should emit error on network failure", () => {
+      const events: AnalysisEvent[] = [];
+      service.pollJob("job-5").subscribe({
+        next: (event) => events.push(event),
+      });
+
+      vi.advanceTimersByTime(0);
+
+      const req = httpTesting.expectOne("/api/analyze/job-5");
+      req.error(new ProgressEvent("error"));
+
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe("error");
+      if (events[0].type === "error") {
+        expect(events[0].data.message).toBe(
+          "Connection to analysis server lost",
+        );
+      }
+    });
+
+    it("should poll multiple times until complete", () => {
+      const events: AnalysisEvent[] = [];
+      service.pollJob("job-6").subscribe({
+        next: (event) => events.push(event),
+      });
+
+      vi.advanceTimersByTime(0);
+
+      // First poll — running
+      const req1 = httpTesting.expectOne("/api/analyze/job-6");
+      req1.flush({
+        status: "running",
+        step: "detecting_framework",
+        message: "Detecting...",
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe("progress");
+
+      // Advance timer to trigger second poll
+      vi.advanceTimersByTime(2500);
+
+      const req2 = httpTesting.expectOne("/api/analyze/job-6");
+      req2.flush({
+        status: "complete",
+        step: "complete",
+        message: "Done",
+      });
+
+      // Fetch result
+      const resultReq = httpTesting.expectOne("/api/analyze/job-6/result");
+      resultReq.flush({ screens: [], transitions: [] });
+
+      expect(events.length).toBe(2);
+      expect(events[1].type).toBe("complete");
+
+      // No more polls after completion
+      vi.advanceTimersByTime(2500);
+      httpTesting.expectNone("/api/analyze/job-6");
+    });
+  });
+
+  describe("connectToJob (deprecated)", () => {
+    it("should delegate to pollJob", () => {
+      const events: AnalysisEvent[] = [];
+      const sub = service.connectToJob("job-compat").subscribe({
+        next: (event) => events.push(event),
+      });
+
+      vi.advanceTimersByTime(0);
+
+      const req = httpTesting.expectOne("/api/analyze/job-compat");
+      req.flush({
+        status: "running",
+        step: "analyzing_routes",
+        message: "Analyzing...",
+      });
+
+      expect(events.length).toBe(1);
+      expect(events[0].type).toBe("progress");
+
+      sub.unsubscribe();
+    });
   });
 });

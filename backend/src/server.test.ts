@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createApp } from "./server.js";
 import { CopilotClientManager } from "./analysis/copilot-client.js";
-import { JobManager } from "./analyze/job-manager.js";
+import { JobStore, getInMemoryJobKV } from "./analyze/job-store.js";
 import type { Hono } from "hono";
 
 describe("Hono endpoints", () => {
@@ -13,7 +13,10 @@ describe("Hono endpoints", () => {
       chatCompletion: vi.fn(async () => ({ content: "[]" })),
       dispose: vi.fn(),
     }));
-    app = createApp({ clientManager, jobManager: new JobManager() });
+    app = createApp({
+      clientManager,
+      jobStore: new JobStore(getInMemoryJobKV()),
+    });
   });
 
   afterEach(() => {

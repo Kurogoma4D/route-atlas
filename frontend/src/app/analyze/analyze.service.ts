@@ -1,10 +1,18 @@
-import { Injectable, inject, NgZone } from "@angular/core";
+import { Injectable, inject } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
-import { Observable } from "rxjs";
+import {
+  Observable,
+  timer,
+  switchMap,
+  takeWhile,
+  map,
+  catchError,
+  of,
+} from "rxjs";
 import { environment } from "../../environments/environment";
 
 /**
- * Steps emitted by the SSE progress stream.
+ * Steps emitted during analysis progress polling.
  */
 export type AnalysisStep =
   | "detecting_framework"
@@ -29,15 +37,32 @@ export interface StartAnalysisResponse {
   jobId: string;
 }
 
-export type SseEvent =
+/**
+ * Job state returned by GET /api/analyze/:jobId
+ */
+export interface JobPollResponse {
+  status: "pending" | "running" | "complete" | "error";
+  step: string;
+  message: string;
+  error?: string;
+}
+
+export type AnalysisEvent =
   | { type: "progress"; data: ProgressEvent }
   | { type: "complete"; data: unknown }
   | { type: "error"; data: { message: string } };
 
+/**
+ * @deprecated Use `AnalysisEvent` instead. Kept for backward compatibility.
+ */
+export type SseEvent = AnalysisEvent;
+
+/** Default polling interval in milliseconds. */
+const POLL_INTERVAL_MS = 2500;
+
 @Injectable({ providedIn: "root" })
 export class AnalyzeService {
   private http = inject(HttpClient);
-  private ngZone = inject(NgZone);
   private apiBase = `${environment.apiBaseUrl}/api/analyze`;
 
   /**
@@ -52,80 +77,76 @@ export class AnalyzeService {
   }
 
   /**
-   * Connect to the SSE stream for a given job.
-   * Returns an Observable that emits SseEvent objects and completes
-   * when the server sends a `complete` event, or errors on `error` event.
+   * Poll the job status endpoint at a regular interval.
+   * Emits AnalysisEvent objects and completes when the job reaches
+   * a terminal state (`complete` or `error`).
+   *
+   * When the job completes, the service fetches the full result from
+   * GET /api/analyze/:jobId/result and emits a `complete` event.
    */
-  connectToJob(jobId: string): Observable<SseEvent> {
-    return new Observable<SseEvent>((subscriber) => {
-      const url = `${this.apiBase}/${encodeURIComponent(jobId)}`;
-      const eventSource = new EventSource(url, { withCredentials: true });
+  pollJob(jobId: string): Observable<AnalysisEvent> {
+    const pollUrl = `${this.apiBase}/${encodeURIComponent(jobId)}`;
+    const resultUrl = `${this.apiBase}/${encodeURIComponent(jobId)}/result`;
 
-      eventSource.addEventListener("progress", (event: MessageEvent) => {
-        this.ngZone.run(() => {
-          try {
-            const data = JSON.parse(event.data) as ProgressEvent;
-            subscriber.next({ type: "progress", data });
-          } catch {
-            // Ignore malformed events
-          }
-        });
-      });
+    return timer(0, POLL_INTERVAL_MS).pipe(
+      switchMap(() =>
+        this.http.get<JobPollResponse>(pollUrl, { withCredentials: true }).pipe(
+          catchError(() =>
+            of<JobPollResponse>({
+              status: "error",
+              step: "error",
+              message: "Connection to analysis server lost",
+              error: "Connection to analysis server lost",
+            }),
+          ),
+        ),
+      ),
+      switchMap((response): Observable<AnalysisEvent> => {
+        if (response.status === "complete") {
+          // Fetch the full result
+          return this.http
+            .get<unknown>(resultUrl, { withCredentials: true })
+            .pipe(
+              map(
+                (result): AnalysisEvent => ({
+                  type: "complete",
+                  data: result,
+                }),
+              ),
+              catchError(() =>
+                of<AnalysisEvent>({
+                  type: "error",
+                  data: { message: "Failed to fetch analysis result" },
+                }),
+              ),
+            );
+        }
 
-      eventSource.addEventListener("complete", (event: MessageEvent) => {
-        this.ngZone.run(() => {
-          try {
-            const data = JSON.parse(event.data) as unknown;
-            subscriber.next({ type: "complete", data });
-            subscriber.complete();
-          } catch {
-            subscriber.complete();
-          } finally {
-            eventSource.close();
-          }
-        });
-      });
-
-      eventSource.addEventListener("error", (event: MessageEvent) => {
-        this.ngZone.run(() => {
-          // The SSE 'error' event could be a named event with data,
-          // or a connection error with no data.
-          if (event.data) {
-            try {
-              const data = JSON.parse(event.data) as { message: string };
-              subscriber.next({ type: "error", data });
-            } catch {
-              subscriber.next({
-                type: "error",
-                data: { message: "Unknown analysis error" },
-              });
-            }
-          } else {
-            subscriber.next({
-              type: "error",
-              data: { message: "Connection to analysis server lost" },
-            });
-          }
-          eventSource.close();
-          subscriber.complete();
-        });
-      });
-
-      eventSource.onerror = () => {
-        this.ngZone.run(() => {
-          subscriber.next({
-            type: "error" as const,
-            data: { message: "Connection to analysis server lost" },
+        if (response.status === "error") {
+          return of<AnalysisEvent>({
+            type: "error",
+            data: { message: response.error ?? response.message },
           });
-          eventSource.close();
-          subscriber.complete();
-        });
-      };
+        }
 
-      // Cleanup on unsubscribe
-      return () => {
-        eventSource.close();
-      };
-    });
+        // pending or running — emit progress
+        return of<AnalysisEvent>({
+          type: "progress",
+          data: {
+            step: response.step as AnalysisStep,
+            message: response.message,
+          },
+        });
+      }),
+      // Complete synchronously after a terminal event (inclusive mode)
+      takeWhile((event) => event.type === "progress", true),
+    );
+  }
+
+  /**
+   * @deprecated Use `pollJob` instead. Kept for backward compatibility.
+   */
+  connectToJob(jobId: string): Observable<AnalysisEvent> {
+    return this.pollJob(jobId);
   }
 }

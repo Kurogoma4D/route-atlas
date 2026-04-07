@@ -34,6 +34,8 @@ export interface SessionData {
 export interface AppBindings {
   Bindings: {
     SESSIONS: KVNamespace;
+    JOBS: KVNamespace;
+    ANALYZE_QUEUE: Queue;
     // Environment variables set in wrangler.toml [vars] or secrets
     GITHUB_CLIENT_ID?: string;
     GITHUB_CLIENT_SECRET?: string;
