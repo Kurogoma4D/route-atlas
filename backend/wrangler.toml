@@ -19,7 +19,7 @@ id = "e34a4739da1047e5993ce88d46415c2d"
 # Queue for analysis tasks
 [[queues.producers]]
 queue = "route-atlas-analyze"
-binding = "route_atlas_analyze"
+binding = "ANALYZE_QUEUE"
 
 [[queues.consumers]]
 queue = "route-atlas-analyze"
