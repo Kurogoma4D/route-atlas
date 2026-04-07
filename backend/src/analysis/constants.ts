@@ -26,6 +26,7 @@ export const EXCLUDED_DIR_PREFIXES = [
   ".expo/",
   ".cache/",
   ".gatsby/",
+  ".astro/",
 ];
 
 /**

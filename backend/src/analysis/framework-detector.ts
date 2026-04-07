@@ -23,6 +23,7 @@
  * - Flutter go_router
  * - Flutter auto_route
  * - Flutter Navigator (imperative)
+ * - Astro
  * - Expo Router (React Native)
  * - React Navigation (React Native)
  */
@@ -48,6 +49,7 @@ export type FrameworkName =
   | "flutter-auto-route"
   | "flutter-navigator"
   | "gatsby"
+  | "astro"
   | "expo-router"
   | "react-navigation";
 
@@ -109,6 +111,13 @@ export function isFlutterFramework(framework: string): boolean {
  */
 export function isReactNativeFramework(framework: string): boolean {
   return framework === "expo-router" || framework === "react-navigation";
+}
+
+/**
+ * Returns true when the framework name refers to an Astro framework.
+ */
+export function isAstroFramework(framework: string): boolean {
+  return framework === "astro";
 }
 
 /**
@@ -530,6 +539,15 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     resolve: () => ({
       framework: "gatsby",
       routingFilePatterns: ["src/pages/**/*.{tsx,jsx,ts,js}"],
+    }),
+  },
+  {
+    key: "astro",
+    resolve: () => ({
+      framework: "astro",
+      routingFilePatterns: [
+        "src/pages/**/*.{astro,tsx,jsx,ts,js,md,mdx}",
+      ],
     }),
   },
   {

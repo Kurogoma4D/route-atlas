@@ -9,7 +9,7 @@
  */
 
 import type { FrameworkName } from "./framework-detector.js";
-import { isAndroidFramework, isIOSFramework, isFlutterFramework, isReactNativeFramework } from "./framework-detector.js";
+import { isAndroidFramework, isIOSFramework, isFlutterFramework, isReactNativeFramework, isAstroFramework } from "./framework-detector.js";
 
 // ---------------------------------------------------------------------------
 // System prompt (shared across all turns)
@@ -35,6 +35,7 @@ export function buildTurn1Prompt(
     .join("\n\n");
 
   const isPlainHtml = framework === "plain-html";
+  const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
   const isFlutter = isFlutterFramework(framework);
@@ -101,6 +102,20 @@ For Gatsby projects (file-based routing similar to Next.js Pages Router):
 
 Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
+  } else if (isAstro) {
+    frameworkInstructions =
+      `Analyze the following Astro page files and extract every screen / route.
+
+For Astro projects (file-based routing):
+- Each file under src/pages/ represents a route. The file path maps to the URL route (e.g. src/pages/index.astro -> /, src/pages/about.astro -> /about, src/pages/blog/[slug].astro -> /blog/:slug).
+- Supported page extensions: .astro, .md, .mdx, .tsx, .jsx, .ts, .js.
+- Files named index.{astro,md,mdx} represent the default route for their directory.
+- [param] brackets represent dynamic route segments: src/pages/blog/[slug].astro -> /blog/:slug.
+- [...spread] represents catch-all routes: src/pages/[...path].astro -> /:path*.
+- API routes under src/pages/api/ (e.g. src/pages/api/search.ts) are server endpoints, NOT screens — exclude them from the result.
+
+Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
+Set "componentFile" to the .astro/.md/.mdx/.tsx/.jsx file path.`;
   } else if (isPlainHtml) {
     frameworkInstructions =
       `Analyze the following plain HTML files. Each HTML file represents a screen.
@@ -142,13 +157,15 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
         : "src/screens/HomeScreen.tsx")
     : isFlutter
       ? "lib/screens/home_screen.dart"
-      : isPlainHtml
-        ? "index.html"
-        : isAndroid
-          ? "app/src/main/java/com/example/HomeFragment.kt"
-          : isIOS
-            ? "Sources/Views/HomeView.swift"
-            : "app/page.tsx";
+      : isAstro
+        ? "src/pages/index.astro"
+        : isPlainHtml
+          ? "index.html"
+          : isAndroid
+            ? "app/src/main/java/com/example/HomeFragment.kt"
+            : isIOS
+              ? "Sources/Views/HomeView.swift"
+              : "app/page.tsx";
 
   return `${frameworkInstructions}
 
@@ -183,6 +200,7 @@ export function buildTurn2Prompt(
   componentSource: string,
   framework: FrameworkName,
 ): string {
+  const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
   const isFlutter = isFlutterFramework(framework);
@@ -229,6 +247,16 @@ export function buildTurn2Prompt(
 - @ViewBuilder conditional rendering (if/else, switch statements inside view body)
 - @Environment / @EnvironmentObject / @State / @Binding driven state changes
 - Other conditional rendering (feature flags, #if DEBUG checks)`;
+  } else if (isAstro) {
+    lookForItems = `- Frontmatter conditionals (if/else in the --- block that change rendered content)
+- Astro.redirect() calls in frontmatter (server-side redirects)
+- Loading states (skeleton components, loading placeholders)
+- Error states (error message components, try-catch in frontmatter)
+- Empty states (no-data messages, empty list placeholders)
+- Authentication-required states (auth checks in frontmatter, Astro.redirect to login)
+- Permission-based rendering (role checks)
+- Dynamic rendering based on Astro.request, Astro.url, Astro.params
+- Other conditional rendering (feature flags, environment checks via import.meta.env)`;
   } else {
     lookForItems = `- Loading states (spinners, skeletons, suspense boundaries)
 - Error states (error boundaries, catch blocks, error UI)
@@ -273,6 +301,7 @@ export function buildTurn3Prompt(
     .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n");
 
+  const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
   const isIOS = isIOSFramework(framework);
   const isFlutter = isFlutterFramework(framework);
@@ -324,6 +353,14 @@ export function buildTurn3Prompt(
 - <a href="..."> for external links
 - window.location / location.href assignments
 - Form submit handlers that navigate`;
+  } else if (isAstro) {
+    lookForItems = `- <a href="..."> (Astro uses standard HTML anchor tags for navigation by default)
+- Astro.redirect() in frontmatter (server-side redirects)
+- <ViewTransitions /> component usage (enables client-side navigation via View Transitions API)
+- window.location / location.href assignments in <script> tags
+- Form submit handlers that navigate
+- data-astro-reload attribute (forces full page reload)
+- Programmatic navigation in client-side island components (React/Vue/Svelte within client:* directives)`;
   } else {
     lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
@@ -342,9 +379,11 @@ export function buildTurn3Prompt(
         ? `"NavController.navigate", "startActivity", "popBackStack"`
         : isIOS
           ? `"NavigationLink", "pushViewController", "sheet"`
-          : framework === "gatsby"
-            ? `"Link to", "navigate", "window.location"`
-            : `"Link", "router.push", "window.location"`;
+          : isAstro
+            ? `"a href", "Astro.redirect", "window.location"`
+            : framework === "gatsby"
+              ? `"Link to", "navigate", "window.location"`
+              : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 

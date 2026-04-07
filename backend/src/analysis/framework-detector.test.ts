@@ -8,6 +8,7 @@ import {
   isIOSFramework,
   isFlutterFramework,
   isReactNativeFramework,
+  isAstroFramework,
   isExcludedPath,
   UnsupportedFrameworkError,
   type PackageJson,
@@ -131,6 +132,43 @@ describe("detectFramework", () => {
         ["src/pages/index.tsx"],
       );
       expect(result.framework).toBe("gatsby");
+    });
+  });
+
+  describe("Astro", () => {
+    it("detects Astro from dependencies", () => {
+      const result = detectFramework(
+        pkg({ astro: "4.0.0" }),
+        ["src/pages/index.astro", "src/pages/about.astro"],
+      );
+      expect(result.framework).toBe("astro");
+      expect(result.routingFilePatterns).toContain(
+        "src/pages/**/*.{astro,tsx,jsx,ts,js,md,mdx}",
+      );
+    });
+
+    it("detects Astro from devDependencies", () => {
+      const result = detectFramework(
+        devPkg({ astro: "4.0.0" }),
+        ["src/pages/index.astro"],
+      );
+      expect(result.framework).toBe("astro");
+    });
+
+    it("prefers Astro over react-router-dom when both present", () => {
+      const result = detectFramework(
+        pkg({ astro: "4.0.0", "react-router-dom": "6.0.0", react: "18.0.0" }),
+        ["src/pages/index.astro"],
+      );
+      expect(result.framework).toBe("astro");
+    });
+
+    it("prefers Astro over vue-router when both present", () => {
+      const result = detectFramework(
+        pkg({ astro: "4.0.0", "vue-router": "4.0.0" }),
+        ["src/pages/index.astro"],
+      );
+      expect(result.framework).toBe("astro");
     });
   });
 
@@ -1098,6 +1136,32 @@ describe("isReactNativeFramework", () => {
 });
 
 // ---------------------------------------------------------------------------
+// isAstroFramework helper
+// ---------------------------------------------------------------------------
+describe("isAstroFramework", () => {
+  it("returns true for astro", () => {
+    expect(isAstroFramework("astro")).toBe(true);
+  });
+
+  it("returns false for web frameworks", () => {
+    expect(isAstroFramework("nextjs-app")).toBe(false);
+    expect(isAstroFramework("react-router")).toBe(false);
+  });
+
+  it("returns false for android frameworks", () => {
+    expect(isAstroFramework("android-navigation")).toBe(false);
+  });
+
+  it("returns false for flutter frameworks", () => {
+    expect(isAstroFramework("flutter-go-router")).toBe(false);
+  });
+
+  it("returns false for ios frameworks", () => {
+    expect(isAstroFramework("ios-swiftui")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // isExcludedPath shared helper
 // ---------------------------------------------------------------------------
 describe("isExcludedPath", () => {
@@ -1123,6 +1187,10 @@ describe("isExcludedPath", () => {
 
   it("returns true for .gatsby paths", () => {
     expect(isExcludedPath(".gatsby/some-file.json")).toBe(true);
+  });
+
+  it("returns true for .astro paths", () => {
+    expect(isExcludedPath(".astro/some-file.json")).toBe(true);
   });
 
   it("returns false for android/ paths (not globally excluded)", () => {
