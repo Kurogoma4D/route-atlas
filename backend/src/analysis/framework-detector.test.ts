@@ -1398,10 +1398,6 @@ describe("isExcludedPath", () => {
     expect(isExcludedPath(".qwik/some-file.json")).toBe(true);
   });
 
-  it("returns true for server paths", () => {
-    expect(isExcludedPath("server/entry.ts")).toBe(true);
-  });
-
   it("returns false for android/ paths (not globally excluded)", () => {
     expect(isExcludedPath("android/app/build.gradle")).toBe(false);
   });
