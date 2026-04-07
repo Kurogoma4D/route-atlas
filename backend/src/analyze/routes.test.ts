@@ -32,6 +32,10 @@ vi.mock("../analysis/framework-detector.js", async () => {
       framework: "ios-swiftui",
       routingFilePatterns: ["**/*View.swift", "**/*App.swift"],
     })),
+    detectFlutterFramework: vi.fn(() => ({
+      framework: "flutter-go-router",
+      routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*_router.dart", "lib/**/*.dart"],
+    })),
   };
 });
 
@@ -494,6 +498,38 @@ describe("Analysis API routes", () => {
       // still return valid LLM responses, it should succeed.
       expect(job!.status).toBe("complete");
       expect(detectAndroidFrameworkMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("Flutter platform pipeline", () => {
+    it("exercises the Flutter branch when detectPlatform returns 'flutter'", async () => {
+      const frameworkMod = await import("../analysis/framework-detector.js");
+      const detectPlatformMock = vi.mocked(frameworkMod.detectPlatform);
+      const detectFlutterFrameworkMock = vi.mocked(frameworkMod.detectFlutterFramework);
+
+      detectPlatformMock.mockReturnValueOnce("flutter");
+      detectFlutterFrameworkMock.mockReturnValueOnce({
+        framework: "flutter-go-router",
+        routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*.dart"],
+      });
+
+      const agent = request.agent(app);
+      await authenticateAgent(agent);
+
+      const postRes = await agent
+        .post("/api/analyze")
+        .send({ owner: "foo", repo: "bar", branch: "main" });
+
+      expect(postRes.status).toBe(202);
+      const { jobId } = postRes.body;
+
+      // Wait for background pipeline
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const job = jobManager.getJob(jobId);
+      expect(job).toBeDefined();
+      expect(job!.status).toBe("complete");
+      expect(detectFlutterFrameworkMock).toHaveBeenCalled();
     });
   });
 

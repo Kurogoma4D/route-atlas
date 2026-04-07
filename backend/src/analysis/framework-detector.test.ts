@@ -4,7 +4,9 @@ import {
   detectPlatform,
   detectAndroidFramework,
   detectiOSFramework,
+  detectFlutterFramework,
   isIOSFramework,
+  isFlutterFramework,
   isExcludedPath,
   UnsupportedFrameworkError,
   type PackageJson,
@@ -761,6 +763,155 @@ describe("detectiOSFramework", () => {
       ["MyApp.xcodeproj/project.pbxproj"],
     );
     expect(result.framework).toBe("ios-uikit");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Platform detection — Flutter
+// ---------------------------------------------------------------------------
+describe("detectPlatform — Flutter", () => {
+  it("returns 'flutter' when pubspec.yaml exists at root", () => {
+    expect(detectPlatform(["pubspec.yaml", "lib/main.dart"])).toBe("flutter");
+  });
+
+  it("prefers flutter over android when both pubspec.yaml and build.gradle exist", () => {
+    // Flutter projects contain android/ with Gradle files; pubspec.yaml takes priority
+    expect(
+      detectPlatform([
+        "pubspec.yaml",
+        "android/build.gradle",
+        "android/app/build.gradle",
+        "lib/main.dart",
+      ]),
+    ).toBe("flutter");
+  });
+
+  it("prefers flutter over ios when both pubspec.yaml and .xcodeproj exist", () => {
+    expect(
+      detectPlatform([
+        "pubspec.yaml",
+        "ios/Runner.xcodeproj/project.pbxproj",
+        "lib/main.dart",
+      ]),
+    ).toBe("flutter");
+  });
+
+  it("returns 'android' when no pubspec.yaml exists but Gradle files do", () => {
+    expect(detectPlatform(["build.gradle", "app/src/main/AndroidManifest.xml"])).toBe("android");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Flutter framework detection
+// ---------------------------------------------------------------------------
+describe("detectFlutterFramework", () => {
+  it("detects flutter-go-router when go_router is in dependencies", () => {
+    const pubspec = `
+name: my_app
+dependencies:
+  flutter:
+    sdk: flutter
+  go_router: ^14.0.0
+`;
+    const result = detectFlutterFramework(pubspec);
+    expect(result.framework).toBe("flutter-go-router");
+    expect(result.routingFilePatterns).toContain("lib/**/router.dart");
+    expect(result.routingFilePatterns).toContain("lib/**/routes.dart");
+    expect(result.routingFilePatterns).toContain("lib/**/*_router.dart");
+  });
+
+  it("detects flutter-auto-route when auto_route is in dependencies", () => {
+    const pubspec = `
+name: my_app
+dependencies:
+  flutter:
+    sdk: flutter
+  auto_route: ^7.0.0
+dev_dependencies:
+  auto_route_generator: ^7.0.0
+`;
+    const result = detectFlutterFramework(pubspec);
+    expect(result.framework).toBe("flutter-auto-route");
+    expect(result.routingFilePatterns).toContain("lib/**/*_router.dart");
+    expect(result.routingFilePatterns).toContain("lib/**/*_router.gr.dart");
+  });
+
+  it("falls back to flutter-navigator when no routing package is found", () => {
+    const pubspec = `
+name: my_app
+dependencies:
+  flutter:
+    sdk: flutter
+`;
+    const result = detectFlutterFramework(pubspec);
+    expect(result.framework).toBe("flutter-navigator");
+    expect(result.routingFilePatterns).toContain("lib/**/main.dart");
+    expect(result.routingFilePatterns).toContain("lib/**/app.dart");
+  });
+
+  it("prefers go_router over auto_route when both are present", () => {
+    const pubspec = `
+name: my_app
+dependencies:
+  flutter:
+    sdk: flutter
+  go_router: ^14.0.0
+  auto_route: ^7.0.0
+`;
+    const result = detectFlutterFramework(pubspec);
+    expect(result.framework).toBe("flutter-go-router");
+  });
+
+  it("falls back to flutter-navigator for invalid YAML", () => {
+    const result = detectFlutterFramework("invalid: yaml: : :");
+    expect(result.framework).toBe("flutter-navigator");
+  });
+
+  it("falls back to flutter-navigator for empty string", () => {
+    const result = detectFlutterFramework("");
+    expect(result.framework).toBe("flutter-navigator");
+  });
+
+  it("detects go_router from dev_dependencies", () => {
+    const pubspec = `
+name: my_app
+dependencies:
+  flutter:
+    sdk: flutter
+dev_dependencies:
+  go_router: ^14.0.0
+`;
+    const result = detectFlutterFramework(pubspec);
+    expect(result.framework).toBe("flutter-go-router");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isFlutterFramework helper
+// ---------------------------------------------------------------------------
+describe("isFlutterFramework", () => {
+  it("returns true for flutter-go-router", () => {
+    expect(isFlutterFramework("flutter-go-router")).toBe(true);
+  });
+
+  it("returns true for flutter-auto-route", () => {
+    expect(isFlutterFramework("flutter-auto-route")).toBe(true);
+  });
+
+  it("returns true for flutter-navigator", () => {
+    expect(isFlutterFramework("flutter-navigator")).toBe(true);
+  });
+
+  it("returns false for android frameworks", () => {
+    expect(isFlutterFramework("android-navigation")).toBe(false);
+  });
+
+  it("returns false for web frameworks", () => {
+    expect(isFlutterFramework("nextjs-app")).toBe(false);
+  });
+
+  it("returns false for ios frameworks", () => {
+    expect(isFlutterFramework("ios-swiftui")).toBe(false);
   });
 });
 
