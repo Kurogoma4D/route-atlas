@@ -20,11 +20,16 @@ export default {
    */
   async queue(
     batch: MessageBatch<AnalyzeQueueMessage>,
-    env: { JOBS: KVNamespace },
+    env: { JOBS: KVNamespace; SESSION_SECRET?: string },
   ) {
     const store = new JobStore(env.JOBS);
     for (const msg of batch.messages) {
-      await handleAnalyzeQueue(msg.body, store, clientManager);
+      await handleAnalyzeQueue(
+        msg.body,
+        store,
+        clientManager,
+        env.SESSION_SECRET,
+      );
       msg.ack();
     }
   },

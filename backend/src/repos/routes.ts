@@ -16,7 +16,9 @@ async function getAccessToken(c: Context): Promise<string> {
   if (!encryptedToken) {
     throw new Error("No encrypted token in session");
   }
-  return await decrypt(encryptedToken);
+  const env = c.env as Record<string, unknown> | undefined;
+  const sessionSecret = env?.["SESSION_SECRET"] as string | undefined;
+  return await decrypt(encryptedToken, sessionSecret);
 }
 
 interface GitHubRepo {
