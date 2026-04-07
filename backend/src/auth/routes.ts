@@ -1,7 +1,8 @@
-import { Router } from "express";
-import type { Request, Response, NextFunction } from "express";
+import { Hono } from "hono";
+import type { Context, Next } from "hono";
 import { randomBytes } from "node:crypto";
 import { encrypt, decrypt } from "./crypto.js";
+import { destroySession } from "./session.js";
 import type { UserInfo, AuthError } from "@route-atlas/shared";
 
 const GITHUB_OAUTH_AUTHORIZE_URL = "https://github.com/login/oauth/authorize";
@@ -96,11 +97,11 @@ export async function checkCopilotAccess(
   }
 }
 
-export function createAuthRouter(): Router {
-  const router = Router();
+export function createAuthRouter(): Hono {
+  const router = new Hono();
 
   // GET /api/auth/github - Redirect to GitHub OAuth authorize URL
-  router.get("/github", (req: Request, res: Response) => {
+  router.get("/github", (c) => {
     try {
       const clientId = getClientId();
       const callbackUrl =
@@ -109,17 +110,17 @@ export function createAuthRouter(): Router {
 
       // Generate CSRF state token
       const state = randomBytes(16).toString("hex");
-      req.session.oauthState = state;
+      const session = c.get("session");
+      session.oauthState = state;
+      c.set("session", session);
 
       const params = new URLSearchParams({
         client_id: clientId,
         redirect_uri: callbackUrl,
-        // repo: needed for reading private repository contents (SPEC.md §4.1)
-        // read:user: needed for reading user profile information
         scope: "repo read:user",
         state,
       });
-      res.redirect(`${GITHUB_OAUTH_AUTHORIZE_URL}?${params.toString()}`);
+      return c.redirect(`${GITHUB_OAUTH_AUTHORIZE_URL}?${params.toString()}`);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Internal server error";
@@ -127,32 +128,31 @@ export function createAuthRouter(): Router {
         error: "config_error",
         message,
       };
-      res.status(500).json(errorResponse);
+      return c.json(errorResponse, 500);
     }
   });
 
   // GET /api/auth/callback - Handle OAuth callback
-  router.get("/callback", async (req: Request, res: Response) => {
-    const code = req.query["code"] as string | undefined;
-    const error = req.query["error"] as string | undefined;
-    const state = req.query["state"] as string | undefined;
+  router.get("/callback", async (c) => {
+    const code = c.req.query("code");
+    const error = c.req.query("error");
+    const state = c.req.query("state");
 
     if (error) {
-      res.redirect("/login?error=oauth_denied");
-      return;
+      return c.redirect("/login?error=oauth_denied");
     }
 
     if (!code) {
-      res.redirect("/login?error=missing_code");
-      return;
+      return c.redirect("/login?error=missing_code");
     }
 
     // Verify CSRF state parameter
-    const expectedState = req.session.oauthState;
-    delete req.session.oauthState;
+    const session = c.get("session");
+    const expectedState = session.oauthState;
+    delete session.oauthState;
     if (!state || state !== expectedState) {
-      res.redirect("/login?error=state_mismatch");
-      return;
+      c.set("session", session);
+      return c.redirect("/login?error=state_mismatch");
     }
 
     try {
@@ -166,54 +166,40 @@ export function createAuthRouter(): Router {
 
       // Encrypt and store token in session
       const encryptedToken = encrypt(accessToken);
-      req.session.encryptedToken = encryptedToken;
-      req.session.user = user;
-      req.session.hasCopilot = hasCopilot;
+      session.encryptedToken = encryptedToken;
+      session.user = user;
+      session.hasCopilot = hasCopilot;
+      c.set("session", session);
 
-      req.session.save((err) => {
-        if (err) {
-          res.redirect("/login?error=session_error");
-          return;
-        }
-        res.redirect("/");
-      });
+      return c.redirect("/");
     } catch {
-      res.redirect("/login?error=token_exchange_failed");
+      c.set("session", session);
+      return c.redirect("/login?error=token_exchange_failed");
     }
   });
 
   // GET /api/auth/me - Get current user info
-  router.get("/me", (req: Request, res: Response) => {
-    if (!req.session.user || !req.session.encryptedToken) {
+  router.get("/me", (c) => {
+    const session = c.get("session");
+    if (!session.user || !session.encryptedToken) {
       const errorResponse: AuthError = {
         error: "unauthorized",
         message: "Not authenticated",
       };
-      res.status(401).json(errorResponse);
-      return;
+      return c.json(errorResponse, 401);
     }
 
     const response: UserInfo & { hasCopilot: boolean } = {
-      ...req.session.user,
-      hasCopilot: req.session.hasCopilot ?? false,
+      ...session.user,
+      hasCopilot: session.hasCopilot ?? false,
     };
-    res.json(response);
+    return c.json(response);
   });
 
   // POST /api/auth/logout - Destroy session
-  router.post("/logout", (req: Request, res: Response) => {
-    req.session.destroy((err) => {
-      if (err) {
-        const errorResponse: AuthError = {
-          error: "logout_failed",
-          message: "Failed to destroy session",
-        };
-        res.status(500).json(errorResponse);
-        return;
-      }
-      res.clearCookie("connect.sid");
-      res.json({ message: "Logged out" });
-    });
+  router.post("/logout", (c) => {
+    destroySession(c);
+    return c.json({ message: "Logged out" });
   });
 
   return router;
@@ -223,25 +209,25 @@ export function createAuthRouter(): Router {
  * Middleware to require authentication.
  * Returns the decrypted access token for downstream handlers.
  */
-export function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (!req.session.user || !req.session.encryptedToken) {
+export async function requireAuth(c: Context, next: Next) {
+  const session = c.get("session");
+  if (!session?.user || !session?.encryptedToken) {
     const errorResponse: AuthError = {
       error: "unauthorized",
       message: "Authentication required",
     };
-    res.status(401).json(errorResponse);
-    return;
+    return c.json(errorResponse, 401);
   }
 
   try {
     // Decrypt token to verify it's still valid
-    decrypt(req.session.encryptedToken);
-    next();
+    decrypt(session.encryptedToken);
+    await next();
   } catch {
     const errorResponse: AuthError = {
       error: "unauthorized",
       message: "Invalid session token",
     };
-    res.status(401).json(errorResponse);
+    return c.json(errorResponse, 401);
   }
 }

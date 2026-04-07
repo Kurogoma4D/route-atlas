@@ -1,16 +1,66 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import request from "supertest";
 import { createApp } from "../server.js";
 import { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobManager } from "../analyze/job-manager.js";
-import type { Express } from "express";
+import type { Hono } from "hono";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
+// ---------------------------------------------------------------------------
+// Cookie-aware request helper
+// ---------------------------------------------------------------------------
+
+/** Extract Set-Cookie headers and merge them into a cookie jar (simple map). */
+function extractCookies(
+  res: Response,
+  jar: Record<string, string>,
+): Record<string, string> {
+  const setCookies = res.headers.getSetAll
+    ? (
+        res.headers as unknown as { getSetAll(name: string): string[] }
+      ).getSetAll("set-cookie")
+    : (res.headers.get("set-cookie")?.split(", ").filter(Boolean) ?? []);
+  for (const raw of setCookies) {
+    const parts = raw.split(";")[0].split("=");
+    if (parts.length >= 2) {
+      jar[parts[0]] = parts.slice(1).join("=");
+    }
+  }
+  return jar;
+}
+
+function cookieHeader(jar: Record<string, string>): string {
+  return Object.entries(jar)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
+
+async function requestWithCookies(
+  app: Hono,
+  path: string,
+  jar: Record<string, string>,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+  };
+  const cookie = cookieHeader(jar);
+  if (cookie) {
+    headers["Cookie"] = cookie;
+  }
+  const res = await app.request(path, { ...init, headers });
+  extractCookies(res, jar);
+  return res;
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
 describe("Auth routes", () => {
-  let app: Express;
+  let app: Hono;
 
   beforeEach(() => {
     vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
@@ -30,10 +80,11 @@ describe("Auth routes", () => {
 
   describe("GET /api/auth/github", () => {
     it("should redirect to GitHub OAuth authorize URL with state and updated scope", async () => {
-      const res = await request(app).get("/api/auth/github");
+      const jar: Record<string, string> = {};
+      const res = await requestWithCookies(app, "/api/auth/github", jar);
 
       expect(res.status).toBe(302);
-      const location = res.headers["location"] as string;
+      const location = res.headers.get("location")!;
       expect(location).toContain("https://github.com/login/oauth/authorize");
       expect(location).toContain("client_id=test-client-id");
       expect(location).toContain("scope=repo+read%3Auser");
@@ -45,61 +96,73 @@ describe("Auth routes", () => {
       delete process.env["GITHUB_CLIENT_ID"];
       app = createApp();
 
-      const res = await request(app).get("/api/auth/github");
+      const res = await app.request("/api/auth/github");
       expect(res.status).toBe(500);
-      expect(res.body).toHaveProperty("error", "config_error");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "config_error");
     });
   });
 
   describe("GET /api/auth/callback", () => {
     /** Helper: initiate OAuth flow via GET /github to obtain a session with state */
-    async function initiateOAuthFlow(agent: ReturnType<typeof request.agent>) {
-      const ghRes = await agent.get("/api/auth/github");
-      const location = ghRes.headers["location"] as string;
+    async function initiateOAuthFlow(
+      jar: Record<string, string>,
+    ): Promise<string> {
+      const res = await requestWithCookies(app, "/api/auth/github", jar);
+      const location = res.headers.get("location")!;
       const url = new URL(location);
       return url.searchParams.get("state")!;
     }
 
     it("should redirect to /login?error=missing_code when no code", async () => {
-      const res = await request(app).get("/api/auth/callback");
+      const jar: Record<string, string> = {};
+      const res = await requestWithCookies(app, "/api/auth/callback", jar);
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toBe("/login?error=missing_code");
+      expect(res.headers.get("location")).toBe("/login?error=missing_code");
     });
 
     it("should redirect to /login?error=oauth_denied when error param present", async () => {
-      const res = await request(app).get(
+      const jar: Record<string, string> = {};
+      const res = await requestWithCookies(
+        app,
         "/api/auth/callback?error=access_denied",
+        jar,
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toBe("/login?error=oauth_denied");
+      expect(res.headers.get("location")).toBe("/login?error=oauth_denied");
     });
 
     it("should redirect to /login?error=state_mismatch when state is missing", async () => {
-      const res = await request(app).get(
+      const jar: Record<string, string> = {};
+      const res = await requestWithCookies(
+        app,
         "/api/auth/callback?code=test_code_123",
+        jar,
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toBe("/login?error=state_mismatch");
+      expect(res.headers.get("location")).toBe("/login?error=state_mismatch");
     });
 
     it("should redirect to /login?error=state_mismatch when state does not match", async () => {
-      const agent = request.agent(app);
-      await initiateOAuthFlow(agent);
+      const jar: Record<string, string> = {};
+      await initiateOAuthFlow(jar);
 
-      const res = await agent.get(
+      const res = await requestWithCookies(
+        app,
         "/api/auth/callback?code=test_code_123&state=wrong_state",
+        jar,
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toBe("/login?error=state_mismatch");
+      expect(res.headers.get("location")).toBe("/login?error=state_mismatch");
     });
 
     it("should exchange code for token and redirect to / on success", async () => {
-      const agent = request.agent(app);
-      const state = await initiateOAuthFlow(agent);
+      const jar: Record<string, string> = {};
+      const state = await initiateOAuthFlow(jar);
 
       // Mock token exchange
       mockFetch.mockResolvedValueOnce({
@@ -123,12 +186,14 @@ describe("Auth routes", () => {
         json: async () => ({}),
       });
 
-      const res = await agent.get(
+      const res = await requestWithCookies(
+        app,
         `/api/auth/callback?code=test_code_123&state=${state}`,
+        jar,
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toBe("/");
+      expect(res.headers.get("location")).toBe("/");
 
       // Verify token exchange was called correctly
       expect(mockFetch).toHaveBeenCalledWith(
@@ -145,8 +210,8 @@ describe("Auth routes", () => {
     });
 
     it("should redirect to /login on token exchange failure", async () => {
-      const agent = request.agent(app);
-      const state = await initiateOAuthFlow(agent);
+      const jar: Record<string, string> = {};
+      const state = await initiateOAuthFlow(jar);
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -156,12 +221,14 @@ describe("Auth routes", () => {
         }),
       });
 
-      const res = await agent.get(
+      const res = await requestWithCookies(
+        app,
         `/api/auth/callback?code=bad_code&state=${state}`,
+        jar,
       );
 
       expect(res.status).toBe(302);
-      expect(res.headers["location"]).toBe(
+      expect(res.headers.get("location")).toBe(
         "/login?error=token_exchange_failed",
       );
     });
@@ -169,18 +236,18 @@ describe("Auth routes", () => {
 
   describe("GET /api/auth/me", () => {
     it("should return 401 when not authenticated", async () => {
-      const res = await request(app).get("/api/auth/me");
-
+      const res = await app.request("/api/auth/me");
       expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty("error", "unauthorized");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "unauthorized");
     });
 
     it("should return user info when authenticated", async () => {
-      const agent = request.agent(app);
+      const jar: Record<string, string> = {};
 
       // Initiate OAuth flow to get state
-      const ghRes = await agent.get("/api/auth/github");
-      const location = ghRes.headers["location"] as string;
+      const ghRes = await requestWithCookies(app, "/api/auth/github", jar);
+      const location = ghRes.headers.get("location")!;
       const state = new URL(location).searchParams.get("state")!;
 
       // Mock token exchange, user info, and Copilot check
@@ -198,27 +265,32 @@ describe("Auth routes", () => {
       });
       mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
 
-      await agent.get(`/api/auth/callback?code=valid_code&state=${state}`);
+      await requestWithCookies(
+        app,
+        `/api/auth/callback?code=valid_code&state=${state}`,
+        jar,
+      );
 
-      const res = await agent.get("/api/auth/me");
+      const res = await requestWithCookies(app, "/api/auth/me", jar);
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("login", "testuser");
-      expect(res.body).toHaveProperty(
+      const body = await res.json();
+      expect(body).toHaveProperty("login", "testuser");
+      expect(body).toHaveProperty(
         "avatarUrl",
         "https://github.com/testuser.png",
       );
-      expect(res.body).toHaveProperty("name", "Test User");
-      expect(res.body).toHaveProperty("hasCopilot", true);
+      expect(body).toHaveProperty("name", "Test User");
+      expect(body).toHaveProperty("hasCopilot", true);
     });
   });
 
   describe("POST /api/auth/logout", () => {
     it("should destroy session and return success", async () => {
-      const agent = request.agent(app);
+      const jar: Record<string, string> = {};
 
       // Initiate OAuth flow to get state
-      const ghRes = await agent.get("/api/auth/github");
-      const location = ghRes.headers["location"] as string;
+      const ghRes = await requestWithCookies(app, "/api/auth/github", jar);
+      const location = ghRes.headers.get("location")!;
       const state = new URL(location).searchParams.get("state")!;
 
       // Authenticate first
@@ -236,28 +308,36 @@ describe("Auth routes", () => {
       });
       mockFetch.mockResolvedValueOnce({ ok: false });
 
-      await agent.get(`/api/auth/callback?code=valid_code&state=${state}`);
+      await requestWithCookies(
+        app,
+        `/api/auth/callback?code=valid_code&state=${state}`,
+        jar,
+      );
 
       // Verify authenticated
-      let res = await agent.get("/api/auth/me");
+      let res = await requestWithCookies(app, "/api/auth/me", jar);
       expect(res.status).toBe(200);
 
       // Logout
-      res = await agent.post("/api/auth/logout");
+      res = await requestWithCookies(app, "/api/auth/logout", jar, {
+        method: "POST",
+      });
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("message", "Logged out");
+      const body = await res.json();
+      expect(body).toHaveProperty("message", "Logged out");
 
       // Verify no longer authenticated
-      res = await agent.get("/api/auth/me");
+      res = await requestWithCookies(app, "/api/auth/me", jar);
       expect(res.status).toBe(401);
     });
   });
 
   describe("requireAuth middleware", () => {
     it("should block unauthenticated access to protected routes", async () => {
-      const res = await request(app).post("/api/analyze");
+      const res = await app.request("/api/analyze", { method: "POST" });
       expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty("error", "unauthorized");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "unauthorized");
     });
   });
 });

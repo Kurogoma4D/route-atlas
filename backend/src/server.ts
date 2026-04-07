@@ -1,80 +1,62 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import express, { type Express } from "express";
-import cors from "cors";
-import session from "express-session";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { createAuthRouter, requireAuth } from "./auth/routes.js";
 import { createReposRouter } from "./repos/routes.js";
 import { createAnalyzeRouter } from "./analyze/routes.js";
 import type { AnalyzeRouterDeps } from "./analyze/routes.js";
 import { CopilotClientManager } from "./analysis/copilot-client.js";
 import { JobManager } from "./analyze/job-manager.js";
-// Session type augmentation loaded via auth/session.d.ts
+import { sessionMiddleware } from "./auth/session.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+export function createApp(analyzeDeps?: AnalyzeRouterDeps): Hono {
+  const app = new Hono();
 
-export function createApp(analyzeDeps?: AnalyzeRouterDeps): Express {
-  const app = express();
-
-  const isProduction = process.env["NODE_ENV"] === "production";
+  const isProduction =
+    typeof process !== "undefined" &&
+    process.env?.["NODE_ENV"] === "production";
 
   const frontendOrigin =
-    process.env["FRONTEND_ORIGIN"] ?? "http://localhost:4200";
+    (typeof process !== "undefined" && process.env?.["FRONTEND_ORIGIN"]) ||
+    "http://localhost:4200";
+
+  const envOrigins =
+    typeof process !== "undefined"
+      ? process.env?.["ALLOWED_ORIGINS"]?.split(",").map((o) => o.trim())
+      : undefined;
+
+  const allowedOrigins: string[] =
+    isProduction && envOrigins ? envOrigins : [frontendOrigin];
 
   app.use(
+    "/*",
     cors({
-      origin: isProduction
-        ? (process.env["ALLOWED_ORIGINS"]?.split(",").map((o) => o.trim()) ??
-          frontendOrigin)
-        : frontendOrigin,
+      origin: allowedOrigins,
       credentials: true,
     }),
   );
-  app.use(express.json());
 
-  const sessionSecret = process.env["SESSION_SECRET"];
-  if (!sessionSecret && process.env["NODE_ENV"] === "production") {
-    throw new Error(
-      "SESSION_SECRET environment variable must be set in production",
-    );
-  }
+  // Session middleware (cookie-based)
+  app.use("/*", sessionMiddleware());
 
-  app.use(
-    session({
-      secret: sessionSecret ?? "default-dev-secret-key",
-      resave: false,
-      saveUninitialized: false,
-      cookie: {
-        secure:
-          process.env["COOKIE_SECURE"] === "true" ||
-          (process.env["COOKIE_SECURE"] === undefined &&
-            (process.env["OAUTH_CALLBACK_URL"]?.startsWith("https://") ??
-              false)),
-        httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000, // 24 hours
-        sameSite: "lax",
-      },
-    }),
-  );
-
-  app.get("/api/health", (_req, res) => {
-    const healthCheck: { status: string; timestamp: string } = {
+  // Health check
+  app.get("/api/health", (c) => {
+    return c.json({
       status: "ok",
       timestamp: new Date().toISOString(),
-    };
-    res.json(healthCheck);
+    });
   });
 
   // Auth routes
-  app.use("/api/auth", createAuthRouter());
+  const authRouter = createAuthRouter();
+  app.route("/api/auth", authRouter);
 
   // Protected: Repository listing routes
-  app.use("/api/repos", requireAuth, createReposRouter());
+  const reposRouter = new Hono();
+  reposRouter.use("/*", requireAuth);
+  reposRouter.route("/", createReposRouter());
+  app.route("/api/repos", reposRouter);
 
   // Protected: Analysis routes (SSE progress)
-  // Create default deps when not provided so the default exported app
-  // always registers analyze routes.
   const resolvedAnalyzeDeps: AnalyzeRouterDeps = analyzeDeps ?? {
     clientManager: new CopilotClientManager((_token) => ({
       chatCompletion: async () => ({ content: "[]" }),
@@ -82,35 +64,19 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps): Express {
     })),
     jobManager: new JobManager(),
   };
-  app.use(
-    "/api/analyze",
-    requireAuth,
-    createAnalyzeRouter(resolvedAnalyzeDeps),
-  );
+  const analyzeRouter = new Hono();
+  analyzeRouter.use("/*", requireAuth);
+  analyzeRouter.route("/", createAnalyzeRouter(resolvedAnalyzeDeps));
+  app.route("/api/analyze", analyzeRouter);
 
-  // In production, serve Angular static files and handle SPA routing
-  if (isProduction) {
-    const frontendDistPath = path.resolve(
-      __dirname,
-      "../../frontend/dist/frontend/browser",
-    );
-    app.use(express.static(frontendDistPath));
-
-    // 404 for unmatched API routes
-    app.all("/api/{*path}", (_req, res) => {
-      res.status(404).json({ error: "Not found" });
-    });
-
-    // SPA fallback: serve index.html for any non-API route
-    app.get("{*path}", (_req, res) => {
-      res.sendFile(path.join(frontendDistPath, "index.html"));
-    });
-  }
+  // 404 for unmatched API routes
+  app.all("/api/*", (c) => {
+    return c.json({ error: "Not found" }, 404);
+  });
 
   return app;
 }
 
 // Default export for backward compatibility with existing tests
-// Note: default app does not include analyze routes (requires CopilotClientManager)
-const app: Express = createApp();
+const app: Hono = createApp();
 export { app };

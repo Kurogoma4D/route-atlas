@@ -432,16 +432,13 @@ describe("detectFramework", () => {
       );
       expect(result.framework).toBe("ember");
       expect(result.routingFilePatterns).toContain("app/router.{js,ts}");
-      expect(result.routingFilePatterns).toContain(
-        "app/routes/**/*.{js,ts}",
-      );
+      expect(result.routingFilePatterns).toContain("app/routes/**/*.{js,ts}");
     });
 
     it("detects Ember.js from devDependencies", () => {
-      const result = detectFramework(
-        devPkg({ "ember-source": "5.4.0" }),
-        ["app/router.js"],
-      );
+      const result = detectFramework(devPkg({ "ember-source": "5.4.0" }), [
+        "app/router.js",
+      ]);
       expect(result.framework).toBe("ember");
     });
 

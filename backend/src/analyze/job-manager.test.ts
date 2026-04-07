@@ -1,13 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { JobManager } from "./job-manager.js";
-import type { Response } from "express";
+import type { SSEWriter } from "./job-manager.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Create a minimal mock Response for SSE testing. */
-function createMockResponse(): Response & {
+/** Create a minimal mock SSEWriter for testing. */
+function createMockWriter(): SSEWriter & {
   written: string[];
   ended: boolean;
 } {
@@ -16,7 +16,9 @@ function createMockResponse(): Response & {
 
   return {
     written,
-    ended,
+    get ended() {
+      return ended;
+    },
     write: vi.fn((chunk: string) => {
       written.push(chunk);
       return true;
@@ -24,7 +26,7 @@ function createMockResponse(): Response & {
     end: vi.fn(() => {
       ended = true;
     }),
-  } as unknown as Response & { written: string[]; ended: boolean };
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -125,7 +127,7 @@ describe("JobManager", () => {
 
     it("returns the correct job", () => {
       const id = manager.createJob("user1");
-      const job = manager.getJob(id);
+      const job = manager.getJob(id!);
       expect(job!.id).toBe(id);
     });
   });
@@ -133,7 +135,7 @@ describe("JobManager", () => {
   describe("access control", () => {
     it("stores the userId on the job", () => {
       const id = manager.createJob("user1");
-      const job = manager.getJob(id);
+      const job = manager.getJob(id!);
       expect(job!.userId).toBe("user1");
     });
 
@@ -141,63 +143,63 @@ describe("JobManager", () => {
       const id1 = manager.createJob("user1");
       const id2 = manager.createJob("user2");
 
-      expect(manager.getJob(id1)!.userId).toBe("user1");
-      expect(manager.getJob(id2)!.userId).toBe("user2");
+      expect(manager.getJob(id1!)!.userId).toBe("user1");
+      expect(manager.getJob(id2!)!.userId).toBe("user2");
     });
   });
 
   describe("SSE connections", () => {
     it("adds and removes connections", () => {
       const id = manager.createJob("user1");
-      const res = createMockResponse();
+      const writer = createMockWriter();
 
-      manager.addConnection(id, res);
-      expect(manager.getJob(id)!.sseConnections.size).toBe(1);
+      manager.addConnection(id!, writer);
+      expect(manager.getJob(id!)!.sseConnections.size).toBe(1);
 
-      manager.removeConnection(id, res);
-      expect(manager.getJob(id)!.sseConnections.size).toBe(0);
+      manager.removeConnection(id!, writer);
+      expect(manager.getJob(id!)!.sseConnections.size).toBe(0);
     });
 
     it("does not crash when adding to non-existent job", () => {
-      const res = createMockResponse();
-      expect(() => manager.addConnection("nope", res)).not.toThrow();
+      const writer = createMockWriter();
+      expect(() => manager.addConnection("nope", writer)).not.toThrow();
     });
   });
 
   describe("sendProgress", () => {
     it("sends progress events to all SSE connections", () => {
       const id = manager.createJob("user1");
-      const res1 = createMockResponse();
-      const res2 = createMockResponse();
+      const writer1 = createMockWriter();
+      const writer2 = createMockWriter();
 
-      manager.addConnection(id, res1);
-      manager.addConnection(id, res2);
+      manager.addConnection(id!, writer1);
+      manager.addConnection(id!, writer2);
 
-      manager.sendProgress(id, {
+      manager.sendProgress(id!, {
         step: "detecting_framework",
         message: "Detecting...",
       });
 
-      expect(res1.write).toHaveBeenCalledWith(
+      expect(writer1.write).toHaveBeenCalledWith(
         'event: progress\ndata: {"step":"detecting_framework","message":"Detecting..."}\n\n',
       );
-      expect(res2.write).toHaveBeenCalledWith(
+      expect(writer2.write).toHaveBeenCalledWith(
         'event: progress\ndata: {"step":"detecting_framework","message":"Detecting..."}\n\n',
       );
     });
 
     it("updates job status to running", () => {
       const id = manager.createJob("user1");
-      manager.sendProgress(id, { step: "test", message: "test" });
-      expect(manager.getJob(id)!.status).toBe("running");
+      manager.sendProgress(id!, { step: "test", message: "test" });
+      expect(manager.getJob(id!)!.status).toBe("running");
     });
   });
 
   describe("sendComplete", () => {
     it("sends complete event and closes connections", () => {
       const id = manager.createJob("user1");
-      const res = createMockResponse();
-      manager.addConnection(id, res);
+      const writer = createMockWriter();
+      manager.addConnection(id!, writer);
 
       const result = {
         framework: "next",
@@ -205,44 +207,44 @@ describe("JobManager", () => {
         transitions: [],
       };
 
-      manager.sendComplete(id, result);
+      manager.sendComplete(id!, result);
 
-      expect(res.write).toHaveBeenCalledWith(
+      expect(writer.write).toHaveBeenCalledWith(
         expect.stringContaining("event: complete"),
       );
-      expect(res.end).toHaveBeenCalled();
-      expect(manager.getJob(id)!.status).toBe("complete");
-      expect(manager.getJob(id)!.result).toEqual(result);
-      expect(manager.getJob(id)!.sseConnections.size).toBe(0);
+      expect(writer.end).toHaveBeenCalled();
+      expect(manager.getJob(id!)!.status).toBe("complete");
+      expect(manager.getJob(id!)!.result).toEqual(result);
+      expect(manager.getJob(id!)!.sseConnections.size).toBe(0);
     });
   });
 
   describe("sendError", () => {
     it("sends error event and closes connections", () => {
       const id = manager.createJob("user1");
-      const res = createMockResponse();
-      manager.addConnection(id, res);
+      const writer = createMockWriter();
+      manager.addConnection(id!, writer);
 
-      manager.sendError(id, "Something went wrong");
+      manager.sendError(id!, "Something went wrong");
 
-      expect(res.write).toHaveBeenCalledWith(
+      expect(writer.write).toHaveBeenCalledWith(
         'event: error\ndata: {"message":"Something went wrong"}\n\n',
       );
-      expect(res.end).toHaveBeenCalled();
-      expect(manager.getJob(id)!.status).toBe("error");
-      expect(manager.getJob(id)!.error).toBe("Something went wrong");
-      expect(manager.getJob(id)!.sseConnections.size).toBe(0);
+      expect(writer.end).toHaveBeenCalled();
+      expect(manager.getJob(id!)!.status).toBe("error");
+      expect(manager.getJob(id!)!.error).toBe("Something went wrong");
+      expect(manager.getJob(id!)!.sseConnections.size).toBe(0);
     });
   });
 
   describe("auto-cleanup", () => {
     it("removes job after timeout", () => {
       const id = manager.createJob("user1");
-      expect(manager.getJob(id)).toBeDefined();
+      expect(manager.getJob(id!)).toBeDefined();
 
       vi.advanceTimersByTime(5001);
 
-      expect(manager.getJob(id)).toBeUndefined();
+      expect(manager.getJob(id!)).toBeUndefined();
       expect(manager.size).toBe(0);
     });
 
@@ -251,27 +253,27 @@ describe("JobManager", () => {
 
       vi.advanceTimersByTime(4999);
 
-      expect(manager.getJob(id)).toBeDefined();
+      expect(manager.getJob(id!)).toBeDefined();
     });
   });
 
   describe("removeJob", () => {
     it("removes a job and cancels its cleanup timer", () => {
       const id = manager.createJob("user1");
-      manager.removeJob(id);
+      manager.removeJob(id!);
 
-      expect(manager.getJob(id)).toBeUndefined();
+      expect(manager.getJob(id!)).toBeUndefined();
       expect(manager.size).toBe(0);
     });
 
     it("closes SSE connections on removal", () => {
       const id = manager.createJob("user1");
-      const res = createMockResponse();
-      manager.addConnection(id, res);
+      const writer = createMockWriter();
+      manager.addConnection(id!, writer);
 
-      manager.removeJob(id);
+      manager.removeJob(id!);
 
-      expect(res.end).toHaveBeenCalled();
+      expect(writer.end).toHaveBeenCalled();
     });
   });
 

@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import request from "supertest";
 import { createApp } from "../server.js";
 import { JobManager } from "./job-manager.js";
 import { CopilotClientManager } from "../analysis/copilot-client.js";
 import type { LLMAdapter } from "../analysis/copilot-client.js";
-import type { Express } from "express";
+import type { Hono } from "hono";
+import type { SSEWriter } from "./job-manager.js";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -16,7 +16,9 @@ vi.stubGlobal("fetch", mockFetch);
 
 // Mock the analysis modules to avoid real GitHub API / LLM calls
 vi.mock("../analysis/framework-detector.js", async () => {
-  const actual = await vi.importActual<typeof import("../analysis/framework-detector.js")>("../analysis/framework-detector.js");
+  const actual = await vi.importActual<
+    typeof import("../analysis/framework-detector.js")
+  >("../analysis/framework-detector.js");
   return {
     ...actual,
     detectFramework: vi.fn(() => ({
@@ -34,7 +36,11 @@ vi.mock("../analysis/framework-detector.js", async () => {
     })),
     detectFlutterFramework: vi.fn(() => ({
       framework: "flutter-go-router",
-      routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*_router.dart"],
+      routingFilePatterns: [
+        "lib/**/router.dart",
+        "lib/**/routes.dart",
+        "lib/**/*_router.dart",
+      ],
     })),
   };
 });
@@ -61,7 +67,6 @@ vi.mock("../analysis/github-file-fetcher.js", () => ({
   })),
   filterFilesByPatterns: vi.fn(
     (files: Array<{ path: string }>, patterns: string[]) => {
-      // Return files matching simple pattern check
       return files.filter((f: { path: string }) =>
         patterns.some((p: string) => {
           const ext = p.split(".").pop();
@@ -82,6 +87,52 @@ vi.mock("../analysis/github-file-fetcher.js", () => ({
     },
   ),
 }));
+
+// ---------------------------------------------------------------------------
+// Cookie-aware request helper
+// ---------------------------------------------------------------------------
+
+function extractCookies(
+  res: Response,
+  jar: Record<string, string>,
+): Record<string, string> {
+  const setCookies = res.headers.getSetAll
+    ? (
+        res.headers as unknown as { getSetAll(name: string): string[] }
+      ).getSetAll("set-cookie")
+    : (res.headers.get("set-cookie")?.split(", ").filter(Boolean) ?? []);
+  for (const raw of setCookies) {
+    const parts = raw.split(";")[0].split("=");
+    if (parts.length >= 2) {
+      jar[parts[0]] = parts.slice(1).join("=");
+    }
+  }
+  return jar;
+}
+
+function cookieHeader(jar: Record<string, string>): string {
+  return Object.entries(jar)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
+
+async function requestWithCookies(
+  app: Hono,
+  path: string,
+  jar: Record<string, string>,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+  };
+  const cookie = cookieHeader(jar);
+  if (cookie) {
+    headers["Cookie"] = cookie;
+  }
+  const res = await app.request(path, { ...init, headers });
+  extractCookies(res, jar);
+  return res;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -114,23 +165,20 @@ function createMockAdapter(): LLMAdapter {
 }
 
 /**
- * Authenticate a supertest agent by going through the OAuth flow with mocks.
+ * Authenticate via OAuth flow and return the cookie jar.
  */
-async function authenticateAgent(
-  agent: ReturnType<typeof request.agent>,
-): Promise<void> {
-  // Initiate OAuth to get state
-  const ghRes = await agent.get("/api/auth/github");
-  const location = ghRes.headers["location"] as string;
+async function authenticateAgent(app: Hono): Promise<Record<string, string>> {
+  const jar: Record<string, string> = {};
+
+  const ghRes = await requestWithCookies(app, "/api/auth/github", jar);
+  const location = ghRes.headers.get("location")!;
   const state = new URL(location).searchParams.get("state")!;
 
-  // Mock token exchange
   mockFetch.mockResolvedValueOnce({
     ok: true,
     json: async () => ({ access_token: "gho_test_token_123" }),
   });
 
-  // Mock user info
   mockFetch.mockResolvedValueOnce({
     ok: true,
     json: async () => ({
@@ -140,23 +188,28 @@ async function authenticateAgent(
     }),
   });
 
-  // Mock Copilot access check
   mockFetch.mockResolvedValueOnce({
     ok: true,
     json: async () => ({}),
   });
 
-  await agent.get(`/api/auth/callback?code=valid_code&state=${state}`);
+  await requestWithCookies(
+    app,
+    `/api/auth/callback?code=valid_code&state=${state}`,
+    jar,
+  );
+
+  return jar;
 }
 
 /**
  * Authenticate a second user (different login).
  */
-async function authenticateAgent2(
-  agent: ReturnType<typeof request.agent>,
-): Promise<void> {
-  const ghRes = await agent.get("/api/auth/github");
-  const location = ghRes.headers["location"] as string;
+async function authenticateAgent2(app: Hono): Promise<Record<string, string>> {
+  const jar: Record<string, string> = {};
+
+  const ghRes = await requestWithCookies(app, "/api/auth/github", jar);
+  const location = ghRes.headers.get("location")!;
   const state = new URL(location).searchParams.get("state")!;
 
   mockFetch.mockResolvedValueOnce({
@@ -178,7 +231,13 @@ async function authenticateAgent2(
     json: async () => ({}),
   });
 
-  await agent.get(`/api/auth/callback?code=valid_code_2&state=${state}`);
+  await requestWithCookies(
+    app,
+    `/api/auth/callback?code=valid_code_2&state=${state}`,
+    jar,
+  );
+
+  return jar;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +245,7 @@ async function authenticateAgent2(
 // ---------------------------------------------------------------------------
 
 describe("Analysis API routes", () => {
-  let app: Express;
+  let app: Hono;
   let jobManager: JobManager;
   let clientManager: CopilotClientManager;
 
@@ -210,45 +269,54 @@ describe("Analysis API routes", () => {
 
   describe("POST /api/analyze", () => {
     it("returns 401 when not authenticated", async () => {
-      const res = await request(app)
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
+      const res = await app.request("/api/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
 
       expect(res.status).toBe(401);
     });
 
     it("returns 400 when required fields are missing", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const res = await agent.post("/api/analyze").send({ owner: "foo" });
+      const res = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo" }),
+      });
 
       expect(res.status).toBe(400);
-      expect(res.body).toHaveProperty("error", "validation_error");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "validation_error");
     });
 
     it("returns 202 with jobId", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const res = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
+      const res = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
 
       expect(res.status).toBe(202);
-      expect(res.body).toHaveProperty("jobId");
-      expect(typeof res.body.jobId).toBe("string");
+      const body = await res.json();
+      expect(body).toHaveProperty("jobId");
+      expect(typeof body.jobId).toBe("string");
     });
 
     it("creates a job in the job manager", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
       expect(jobManager.size).toBe(0);
 
-      await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
+      await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
 
       expect(jobManager.size).toBe(1);
     });
@@ -256,89 +324,103 @@ describe("Analysis API routes", () => {
 
   describe("GET /api/analyze/:jobId", () => {
     it("returns 401 when not authenticated", async () => {
-      const res = await request(app).get("/api/analyze/some-job-id");
+      const res = await app.request("/api/analyze/some-job-id");
       expect(res.status).toBe(401);
     });
 
     it("returns 404 for non-existent job", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const res = await agent.get("/api/analyze/non-existent-id");
+      const res = await requestWithCookies(
+        app,
+        "/api/analyze/non-existent-id",
+        jar,
+      );
       expect(res.status).toBe(404);
     });
 
     it("returns 403 when another user tries to access a job", async () => {
       // User 1 creates a job
-      const agent1 = request.agent(app);
-      await authenticateAgent(agent1);
+      const jar1 = await authenticateAgent(app);
 
-      const postRes = await agent1
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      const postRes = await requestWithCookies(app, "/api/analyze", jar1, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
+      const { jobId } = await postRes.json();
 
       // User 2 tries to access
-      const agent2 = request.agent(app);
-      await authenticateAgent2(agent2);
+      const jar2 = await authenticateAgent2(app);
 
-      const res = await agent2.get(`/api/analyze/${jobId}`);
+      const res = await requestWithCookies(app, `/api/analyze/${jobId}`, jar2);
       expect(res.status).toBe(403);
-      expect(res.body).toHaveProperty("error", "forbidden");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "forbidden");
     });
   });
 
   describe("GET /api/analyze/:jobId/result", () => {
     it("returns 401 when not authenticated", async () => {
-      const res = await request(app).get("/api/analyze/some-job-id/result");
+      const res = await app.request("/api/analyze/some-job-id/result");
       expect(res.status).toBe(401);
     });
 
     it("returns 404 for non-existent job", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const res = await agent.get("/api/analyze/non-existent-id/result");
+      const res = await requestWithCookies(
+        app,
+        "/api/analyze/non-existent-id/result",
+        jar,
+      );
       expect(res.status).toBe(404);
     });
 
     it("returns 403 when another user tries to access", async () => {
-      const agent1 = request.agent(app);
-      await authenticateAgent(agent1);
+      const jar1 = await authenticateAgent(app);
 
-      const postRes = await agent1
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      const postRes = await requestWithCookies(app, "/api/analyze", jar1, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
+      const { jobId } = await postRes.json();
 
-      const agent2 = request.agent(app);
-      await authenticateAgent2(agent2);
+      const jar2 = await authenticateAgent2(app);
 
-      const res = await agent2.get(`/api/analyze/${jobId}/result`);
+      const res = await requestWithCookies(
+        app,
+        `/api/analyze/${jobId}/result`,
+        jar2,
+      );
       expect(res.status).toBe(403);
     });
 
     it("returns 409 when job is not complete", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
       // Create a job directly via jobManager so we control its state
       const jobId = jobManager.createJob("testuser");
       expect(jobId).not.toBeNull();
 
-      // Job starts in "pending" state — verify precondition
+      // Job starts in "pending" state
       const job = jobManager.getJob(jobId!);
       expect(job).toBeDefined();
       expect(job!.status).toBe("pending");
 
-      const res = await agent.get(`/api/analyze/${jobId}/result`);
+      const res = await requestWithCookies(
+        app,
+        `/api/analyze/${jobId}/result`,
+        jar,
+      );
       expect(res.status).toBe(409);
-      expect(res.body).toHaveProperty("error", "not_ready");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "not_ready");
     });
 
     it("returns analysis result when job is complete", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
       // Create a job directly and mark it complete with a known result
       const jobId = jobManager.createJob("testuser");
@@ -354,47 +436,55 @@ describe("Analysis API routes", () => {
       expect(job).toBeDefined();
       expect(job!.status).toBe("complete");
 
-      const res = await agent.get(`/api/analyze/${jobId}/result`);
+      const res = await requestWithCookies(
+        app,
+        `/api/analyze/${jobId}/result`,
+        jar,
+      );
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("framework");
-      expect(res.body).toHaveProperty("screens");
-      expect(res.body).toHaveProperty("transitions");
+      const body = await res.json();
+      expect(body).toHaveProperty("framework");
+      expect(body).toHaveProperty("screens");
+      expect(body).toHaveProperty("transitions");
     });
   });
 
   describe("SSE integration", () => {
     it("streams progress events and complete event in order", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
       // Create a job
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
+      const { jobId } = await postRes.json();
 
       // Wait a bit for the background pipeline to run
       await new Promise((resolve) => setTimeout(resolve, 200));
 
       // At this point the job should be complete (mocked pipeline is fast)
       const job = jobManager.getJob(jobId);
-
-      // The job should be complete or have result
-      // If it completed, an SSE connection will get the result immediately
       expect(job).toBeDefined();
 
       // Connect as SSE — since the job is already complete, we should get
       // the complete event immediately
       if (job!.status === "complete") {
-        const sseRes = await agent
-          .get(`/api/analyze/${jobId}`)
-          .set("Accept", "text/event-stream")
-          .buffer(true);
+        const sseRes = await requestWithCookies(
+          app,
+          `/api/analyze/${jobId}`,
+          jar,
+          {
+            headers: { Accept: "text/event-stream" },
+          },
+        );
 
         expect(sseRes.status).toBe(200);
-        expect(sseRes.text).toContain("event: complete");
-        expect(sseRes.text).toContain('"framework":"nextjs-app"');
-        expect(sseRes.text).toContain('"screens"');
+        const text = await sseRes.text();
+        expect(text).toContain("event: complete");
+        expect(text).toContain('"framework":"nextjs-app"');
+        expect(text).toContain('"screens"');
       }
     });
 
@@ -413,13 +503,23 @@ describe("Analysis API routes", () => {
         jobManager: failingJobManager,
       });
 
-      const agent = request.agent(failingApp);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(failingApp);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      const postRes = await requestWithCookies(
+        failingApp,
+        "/api/analyze",
+        jar,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            owner: "foo",
+            repo: "bar",
+            branch: "main",
+          }),
+        },
+      );
+      const { jobId } = await postRes.json();
 
       // Wait for the pipeline to fail
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -430,27 +530,33 @@ describe("Analysis API routes", () => {
       expect(job!.error).toContain("LLM service unavailable");
 
       // SSE should return error event
-      const sseRes = await agent
-        .get(`/api/analyze/${jobId}`)
-        .set("Accept", "text/event-stream")
-        .buffer(true);
+      const sseRes = await requestWithCookies(
+        failingApp,
+        `/api/analyze/${jobId}`,
+        jar,
+        {
+          headers: { Accept: "text/event-stream" },
+        },
+      );
 
       expect(sseRes.status).toBe(200);
-      expect(sseRes.text).toContain("event: error");
-      expect(sseRes.text).toContain("LLM service unavailable");
+      const text = await sseRes.text();
+      expect(text).toContain("event: error");
+      expect(text).toContain("LLM service unavailable");
 
       failingJobManager.clear();
       failingClientManager.clear();
     });
 
     it("complete event contains valid AnalysisResult JSON", async () => {
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
-      const { jobId } = postRes.body;
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
+      const { jobId } = await postRes.json();
 
       // Wait for pipeline
       await new Promise((resolve) => setTimeout(resolve, 200));
@@ -468,10 +574,11 @@ describe("Analysis API routes", () => {
 
   describe("Android platform pipeline", () => {
     it("exercises the Android branch when detectPlatform returns 'android'", async () => {
-      // Override detectPlatform to return "android" for this test
       const frameworkMod = await import("../analysis/framework-detector.js");
       const detectPlatformMock = vi.mocked(frameworkMod.detectPlatform);
-      const detectAndroidFrameworkMock = vi.mocked(frameworkMod.detectAndroidFramework);
+      const detectAndroidFrameworkMock = vi.mocked(
+        frameworkMod.detectAndroidFramework,
+      );
 
       detectPlatformMock.mockReturnValueOnce("android");
       detectAndroidFrameworkMock.mockReturnValueOnce({
@@ -479,23 +586,22 @@ describe("Analysis API routes", () => {
         routingFilePatterns: ["**/res/navigation/*.xml"],
       });
 
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
 
       expect(postRes.status).toBe(202);
-      const { jobId } = postRes.body;
+      const { jobId } = await postRes.json();
 
       // Wait for background pipeline
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       const job = jobManager.getJob(jobId);
       expect(job).toBeDefined();
-      // The pipeline should complete (or error gracefully). Since our mocks
-      // still return valid LLM responses, it should succeed.
       expect(job!.status).toBe("complete");
       expect(detectAndroidFrameworkMock).toHaveBeenCalled();
     });
@@ -505,25 +611,31 @@ describe("Analysis API routes", () => {
     it("exercises the Flutter branch when detectPlatform returns 'flutter'", async () => {
       const frameworkMod = await import("../analysis/framework-detector.js");
       const detectPlatformMock = vi.mocked(frameworkMod.detectPlatform);
-      const detectFlutterFrameworkMock = vi.mocked(frameworkMod.detectFlutterFramework);
+      const detectFlutterFrameworkMock = vi.mocked(
+        frameworkMod.detectFlutterFramework,
+      );
 
       detectPlatformMock.mockReturnValueOnce("flutter");
       detectFlutterFrameworkMock.mockReturnValueOnce({
         framework: "flutter-go-router",
-        routingFilePatterns: ["lib/**/router.dart", "lib/**/routes.dart", "lib/**/*_router.dart"],
+        routingFilePatterns: [
+          "lib/**/router.dart",
+          "lib/**/routes.dart",
+          "lib/**/*_router.dart",
+        ],
       });
 
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
 
       expect(postRes.status).toBe(202);
-      const { jobId } = postRes.body;
+      const { jobId } = await postRes.json();
 
-      // Wait for background pipeline
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       const job = jobManager.getJob(jobId);
@@ -545,17 +657,17 @@ describe("Analysis API routes", () => {
         routingFilePatterns: ["**/*View.swift", "**/*App.swift"],
       });
 
-      const agent = request.agent(app);
-      await authenticateAgent(agent);
+      const jar = await authenticateAgent(app);
 
-      const postRes = await agent
-        .post("/api/analyze")
-        .send({ owner: "foo", repo: "bar", branch: "main" });
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
 
       expect(postRes.status).toBe(202);
-      const { jobId } = postRes.body;
+      const { jobId } = await postRes.json();
 
-      // Wait for background pipeline
       await new Promise((resolve) => setTimeout(resolve, 300));
 
       const job = jobManager.getJob(jobId);
@@ -571,40 +683,40 @@ describe("Analysis API routes", () => {
       const testJobManager = new JobManager(60000);
       const jobId = testJobManager.createJob("testuser");
 
-      // Create a mock SSE response
+      // Create a mock SSE writer
       const written: string[] = [];
-      const mockRes = {
+      const mockWriter: SSEWriter = {
         write: vi.fn((chunk: string) => {
           written.push(chunk);
           return true;
         }),
         end: vi.fn(),
-      } as unknown as import("express").Response;
+      };
 
-      testJobManager.addConnection(jobId, mockRes);
+      testJobManager.addConnection(jobId!, mockWriter);
 
       // Send progress events in order
-      testJobManager.sendProgress(jobId, {
+      testJobManager.sendProgress(jobId!, {
         step: "detecting_framework",
         message: "Detecting...",
       });
-      testJobManager.sendProgress(jobId, {
+      testJobManager.sendProgress(jobId!, {
         step: "fetching_files",
         message: "Fetching...",
       });
-      testJobManager.sendProgress(jobId, {
+      testJobManager.sendProgress(jobId!, {
         step: "analyzing_routes",
         message: "Analyzing routes...",
       });
-      testJobManager.sendProgress(jobId, {
+      testJobManager.sendProgress(jobId!, {
         step: "analyzing_variants",
         message: "Analyzing variants...",
       });
-      testJobManager.sendProgress(jobId, {
+      testJobManager.sendProgress(jobId!, {
         step: "analyzing_transitions",
         message: "Analyzing transitions...",
       });
-      testJobManager.sendComplete(jobId, {
+      testJobManager.sendComplete(jobId!, {
         framework: "nextjs-app",
         screens: [],
         transitions: [],
@@ -626,7 +738,7 @@ describe("Analysis API routes", () => {
       expect(written[5]).toContain("nextjs-app");
 
       // Verify connection was closed after complete
-      expect(mockRes.end).toHaveBeenCalled();
+      expect(mockWriter.end).toHaveBeenCalled();
 
       testJobManager.clear();
     });

@@ -1,19 +1,64 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import request from "supertest";
 import { createApp } from "../server.js";
-import type { Express } from "express";
+import type { Hono } from "hono";
 
 // Mock fetch globally
 const mockFetch = vi.fn();
 vi.stubGlobal("fetch", mockFetch);
 
-/** Helper: authenticate an agent via OAuth flow and return the agent */
-async function authenticateAgent(app: Express) {
-  const agent = request.agent(app);
+// ---------------------------------------------------------------------------
+// Cookie-aware request helper
+// ---------------------------------------------------------------------------
+
+function extractCookies(
+  res: Response,
+  jar: Record<string, string>,
+): Record<string, string> {
+  const setCookies = res.headers.getSetAll
+    ? (
+        res.headers as unknown as { getSetAll(name: string): string[] }
+      ).getSetAll("set-cookie")
+    : (res.headers.get("set-cookie")?.split(", ").filter(Boolean) ?? []);
+  for (const raw of setCookies) {
+    const parts = raw.split(";")[0].split("=");
+    if (parts.length >= 2) {
+      jar[parts[0]] = parts.slice(1).join("=");
+    }
+  }
+  return jar;
+}
+
+function cookieHeader(jar: Record<string, string>): string {
+  return Object.entries(jar)
+    .map(([k, v]) => `${k}=${v}`)
+    .join("; ");
+}
+
+async function requestWithCookies(
+  app: Hono,
+  path: string,
+  jar: Record<string, string>,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string>),
+  };
+  const cookie = cookieHeader(jar);
+  if (cookie) {
+    headers["Cookie"] = cookie;
+  }
+  const res = await app.request(path, { ...init, headers });
+  extractCookies(res, jar);
+  return res;
+}
+
+/** Helper: authenticate via OAuth flow and return the cookie jar */
+async function authenticateAgent(app: Hono): Promise<Record<string, string>> {
+  const jar: Record<string, string> = {};
 
   // Initiate OAuth to get state
-  const ghRes = await agent.get("/api/auth/github");
-  const location = ghRes.headers["location"] as string;
+  const ghRes = await requestWithCookies(app, "/api/auth/github", jar);
+  const location = ghRes.headers.get("location")!;
   const state = new URL(location).searchParams.get("state")!;
 
   // Mock token exchange
@@ -33,9 +78,13 @@ async function authenticateAgent(app: Express) {
   // Mock Copilot check
   mockFetch.mockResolvedValueOnce({ ok: true, json: async () => ({}) });
 
-  await agent.get(`/api/auth/callback?code=valid_code&state=${state}`);
+  await requestWithCookies(
+    app,
+    `/api/auth/callback?code=valid_code&state=${state}`,
+    jar,
+  );
 
-  return agent;
+  return jar;
 }
 
 const sampleRepos = [
@@ -72,7 +121,7 @@ const sampleBranches = [
 ];
 
 describe("Repos routes", () => {
-  let app: Express;
+  let app: Hono;
 
   beforeEach(() => {
     vi.stubEnv("GITHUB_CLIENT_ID", "test-client-id");
@@ -88,13 +137,14 @@ describe("Repos routes", () => {
 
   describe("GET /api/repos", () => {
     it("should return 401 when not authenticated", async () => {
-      const res = await request(app).get("/api/repos");
+      const res = await app.request("/api/repos");
       expect(res.status).toBe(401);
-      expect(res.body).toHaveProperty("error", "unauthorized");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "unauthorized");
     });
 
     it("should return repository list for authenticated user", async () => {
-      const agent = await authenticateAgent(app);
+      const jar = await authenticateAgent(app);
 
       // Mock GitHub repos API
       mockFetch.mockResolvedValueOnce({
@@ -103,12 +153,13 @@ describe("Repos routes", () => {
         headers: new Headers(),
       });
 
-      const res = await agent.get("/api/repos");
+      const res = await requestWithCookies(app, "/api/repos", jar);
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("repos");
-      expect(res.body.repos).toHaveLength(2);
-      expect(res.body.repos[0]).toMatchObject({
+      const body = await res.json();
+      expect(body).toHaveProperty("repos");
+      expect(body.repos).toHaveLength(2);
+      expect(body.repos[0]).toMatchObject({
         id: 1,
         name: "repo-one",
         fullName: "testuser/repo-one",
@@ -118,18 +169,18 @@ describe("Repos routes", () => {
         defaultBranch: "main",
         language: "TypeScript",
       });
-      expect(res.body.repos[1]).toMatchObject({
+      expect(body.repos[1]).toMatchObject({
         id: 2,
         name: "repo-two",
         private: true,
       });
-      expect(res.body).toHaveProperty("page", 1);
-      expect(res.body).toHaveProperty("perPage", 30);
-      expect(res.body).toHaveProperty("hasNextPage", false);
+      expect(body).toHaveProperty("page", 1);
+      expect(body).toHaveProperty("perPage", 30);
+      expect(body).toHaveProperty("hasNextPage", false);
     });
 
     it("should support pagination parameters", async () => {
-      const agent = await authenticateAgent(app);
+      const jar = await authenticateAgent(app);
 
       // Mock with link header indicating next page
       mockFetch.mockResolvedValueOnce({
@@ -140,12 +191,17 @@ describe("Repos routes", () => {
         }),
       });
 
-      const res = await agent.get("/api/repos?page=2&per_page=10");
+      const res = await requestWithCookies(
+        app,
+        "/api/repos?page=2&per_page=10",
+        jar,
+      );
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("page", 2);
-      expect(res.body).toHaveProperty("perPage", 10);
-      expect(res.body).toHaveProperty("hasNextPage", true);
+      const body = await res.json();
+      expect(body).toHaveProperty("page", 2);
+      expect(body).toHaveProperty("perPage", 10);
+      expect(body).toHaveProperty("hasNextPage", true);
 
       // Verify the GitHub API was called with correct params
       const fetchCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
@@ -155,7 +211,7 @@ describe("Repos routes", () => {
     });
 
     it("should cap per_page at 100", async () => {
-      const agent = await authenticateAgent(app);
+      const jar = await authenticateAgent(app);
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -163,10 +219,11 @@ describe("Repos routes", () => {
         headers: new Headers(),
       });
 
-      const res = await agent.get("/api/repos?per_page=200");
+      const res = await requestWithCookies(app, "/api/repos?per_page=200", jar);
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("perPage", 100);
+      const body = await res.json();
+      expect(body).toHaveProperty("perPage", 100);
 
       const fetchCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
       const url = fetchCall[0] as string;
@@ -174,7 +231,7 @@ describe("Repos routes", () => {
     });
 
     it("should handle GitHub API errors", async () => {
-      const agent = await authenticateAgent(app);
+      const jar = await authenticateAgent(app);
 
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -183,23 +240,22 @@ describe("Repos routes", () => {
         headers: new Headers(),
       });
 
-      const res = await agent.get("/api/repos");
+      const res = await requestWithCookies(app, "/api/repos", jar);
 
       expect(res.status).toBe(403);
-      expect(res.body).toHaveProperty("error", "github_api_error");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "github_api_error");
     });
   });
 
   describe("GET /api/repos/:owner/:repo/branches", () => {
     it("should return 401 when not authenticated", async () => {
-      const res = await request(app).get(
-        "/api/repos/testuser/repo-one/branches",
-      );
+      const res = await app.request("/api/repos/testuser/repo-one/branches");
       expect(res.status).toBe(401);
     });
 
     it("should return branch list for a repository", async () => {
-      const agent = await authenticateAgent(app);
+      const jar = await authenticateAgent(app);
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -207,17 +263,22 @@ describe("Repos routes", () => {
         headers: new Headers(),
       });
 
-      const res = await agent.get("/api/repos/testuser/repo-one/branches");
+      const res = await requestWithCookies(
+        app,
+        "/api/repos/testuser/repo-one/branches",
+        jar,
+      );
 
       expect(res.status).toBe(200);
-      expect(res.body).toHaveProperty("branches");
-      expect(res.body.branches).toHaveLength(3);
-      expect(res.body.branches[0]).toMatchObject({
+      const body = await res.json();
+      expect(body).toHaveProperty("branches");
+      expect(body.branches).toHaveLength(3);
+      expect(body.branches[0]).toMatchObject({
         name: "main",
         commit: "abc123",
         protected: true,
       });
-      expect(res.body.branches[1]).toMatchObject({
+      expect(body.branches[1]).toMatchObject({
         name: "develop",
         commit: "def456",
         protected: false,
@@ -225,7 +286,7 @@ describe("Repos routes", () => {
     });
 
     it("should handle GitHub API errors for branches", async () => {
-      const agent = await authenticateAgent(app);
+      const jar = await authenticateAgent(app);
 
       mockFetch.mockResolvedValueOnce({
         ok: false,
@@ -234,10 +295,15 @@ describe("Repos routes", () => {
         headers: new Headers(),
       });
 
-      const res = await agent.get("/api/repos/testuser/nonexistent/branches");
+      const res = await requestWithCookies(
+        app,
+        "/api/repos/testuser/nonexistent/branches",
+        jar,
+      );
 
       expect(res.status).toBe(404);
-      expect(res.body).toHaveProperty("error", "github_api_error");
+      const body = await res.json();
+      expect(body).toHaveProperty("error", "github_api_error");
     });
   });
 });

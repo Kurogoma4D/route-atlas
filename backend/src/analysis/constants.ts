@@ -39,10 +39,7 @@ export const EXCLUDED_DIR_PREFIXES = [
  * `"ios/"` globally would prevent Android/iOS platform detection for
  * non-RN projects whose source files live under those directories.
  */
-export const REACT_NATIVE_EXCLUDED_DIR_PREFIXES = [
-  "android/",
-  "ios/",
-];
+export const REACT_NATIVE_EXCLUDED_DIR_PREFIXES = ["android/", "ios/"];
 
 /**
  * File name patterns that should be excluded from Flutter project analysis.

@@ -14,20 +14,15 @@
   },
   "dependencies": {
     "@github/copilot-sdk": "^0.2.1",
-    "cors": "^2.8.5",
-    "express": "^5.1.0",
-    "express-session": "^1.19.0",
+    "@hono/node-server": "^1.19.13",
+    "hono": "^4.12.12",
     "js-yaml": "^4.1.1",
     "minimatch": "^10.2.5"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.17",
-    "@types/express": "^5.0.0",
-    "@types/express-session": "^1.18.2",
+    "@cloudflare/workers-types": "^4.20260405.1",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.14.1",
-    "@types/supertest": "^7.2.0",
-    "supertest": "^7.2.2",
     "tsx": "^4.19.0",
     "typescript": "~5.8.0",
     "vitest": "^3.1.0"

@@ -124,8 +124,11 @@ export async function githubFetch<T>(
     }
 
     // Rate limit handling
-    if (response.status === 429 ||
-        (response.status === 403 && response.headers.get("x-ratelimit-remaining") === "0")) {
+    if (
+      response.status === 429 ||
+      (response.status === 403 &&
+        response.headers.get("x-ratelimit-remaining") === "0")
+    ) {
       const retryAfterHeader = response.headers.get("retry-after");
       const rateLimitResetHeader = response.headers.get("x-ratelimit-reset");
 
@@ -225,7 +228,7 @@ export async function fetchSingleFileContent(
   }
 
   // Use Contents API
-  const encodedPath = file.path.split('/').map(encodeURIComponent).join('/');
+  const encodedPath = file.path.split("/").map(encodeURIComponent).join("/");
   const refParam = ref ? `?ref=${encodeURIComponent(ref)}` : "";
   const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}${refParam}`;
 

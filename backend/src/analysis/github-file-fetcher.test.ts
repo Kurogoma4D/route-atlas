@@ -472,7 +472,7 @@ describe("github-file-fetcher", () => {
 
       expect(fetch).toHaveBeenCalledWith(
         "https://api.github.com/repos/owner/repo/contents/src/index.ts?ref=develop",
-        expect.any(Object),  // encodeURIComponent is no-op for simple paths
+        expect.any(Object), // encodeURIComponent is no-op for simple paths
       );
     });
   });

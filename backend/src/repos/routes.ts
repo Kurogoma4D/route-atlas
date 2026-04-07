@@ -1,5 +1,5 @@
-import { Router } from "express";
-import type { Request, Response } from "express";
+import { Hono } from "hono";
+import type { Context } from "hono";
 import { decrypt } from "../auth/crypto.js";
 import type {
   RepoInfo,
@@ -10,8 +10,9 @@ import type {
 
 const GITHUB_API_BASE = "https://api.github.com";
 
-function getAccessToken(req: Request): string {
-  const encryptedToken = req.session.encryptedToken;
+function getAccessToken(c: Context): string {
+  const session = c.get("session");
+  const encryptedToken = session?.encryptedToken;
   if (!encryptedToken) {
     throw new Error("No encrypted token in session");
   }
@@ -69,16 +70,16 @@ function hasNextPageFromLink(linkHeader: string | null): boolean {
   return linkHeader.includes('rel="next"');
 }
 
-export function createReposRouter(): Router {
-  const router = Router();
+export function createReposRouter(): Hono {
+  const router = new Hono();
 
   // GET /api/repos — List user's repositories
-  router.get("/", async (req: Request, res: Response) => {
+  router.get("/", async (c) => {
     try {
-      const token = getAccessToken(req);
-      const page = Math.max(parseInt(req.query["page"] as string) || 1, 1);
+      const token = getAccessToken(c);
+      const page = Math.max(parseInt(c.req.query("page") ?? "") || 1, 1);
       const perPage = Math.min(
-        Math.max(parseInt(req.query["per_page"] as string) || 30, 1),
+        Math.max(parseInt(c.req.query("per_page") ?? "") || 30, 1),
         100,
       );
 
@@ -101,11 +102,13 @@ export function createReposRouter(): Router {
       });
 
       if (!response.ok) {
-        res.status(response.status).json({
-          error: "github_api_error",
-          message: "Failed to fetch repositories",
-        });
-        return;
+        return c.json(
+          {
+            error: "github_api_error",
+            message: "Failed to fetch repositories",
+          },
+          response.status as 400 | 401 | 403 | 404 | 500,
+        );
       }
 
       const repos = (await response.json()) as GitHubRepo[];
@@ -119,20 +122,20 @@ export function createReposRouter(): Router {
         hasNextPage: hasNext,
       };
 
-      res.json(result);
+      return c.json(result);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to fetch repositories";
-      res.status(500).json({ error: "internal_error", message });
+      return c.json({ error: "internal_error", message }, 500);
     }
   });
 
   // GET /api/repos/:owner/:repo/branches — List branches for a repository
-  router.get("/:owner/:repo/branches", async (req: Request, res: Response) => {
+  router.get("/:owner/:repo/branches", async (c) => {
     try {
-      const token = getAccessToken(req);
-      const owner = String(req.params["owner"]);
-      const repo = String(req.params["repo"]);
+      const token = getAccessToken(c);
+      const owner = c.req.param("owner");
+      const repo = c.req.param("repo");
 
       const url = new URL(
         `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`,
@@ -148,11 +151,13 @@ export function createReposRouter(): Router {
       });
 
       if (!response.ok) {
-        res.status(response.status).json({
-          error: "github_api_error",
-          message: "Failed to fetch branches",
-        });
-        return;
+        return c.json(
+          {
+            error: "github_api_error",
+            message: "Failed to fetch branches",
+          },
+          response.status as 400 | 401 | 403 | 404 | 500,
+        );
       }
 
       const branches = (await response.json()) as GitHubBranch[];
@@ -161,11 +166,11 @@ export function createReposRouter(): Router {
         branches: branches.map(mapBranch),
       };
 
-      res.json(result);
+      return c.json(result);
     } catch (err) {
       const message =
         err instanceof Error ? err.message : "Failed to fetch branches";
-      res.status(500).json({ error: "internal_error", message });
+      return c.json({ error: "internal_error", message }, 500);
     }
   });
 
