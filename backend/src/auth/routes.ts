@@ -1,7 +1,6 @@
 import { Hono } from "hono";
 import type { Context, Next } from "hono";
-import { randomBytes } from "node:crypto";
-import { encrypt, decrypt } from "./crypto.js";
+import { encrypt, decrypt, generateRandomHex } from "./crypto.js";
 import { destroySession } from "./session.js";
 import type { UserInfo, AuthError } from "@route-atlas/shared";
 
@@ -109,7 +108,7 @@ export function createAuthRouter(): Hono {
         "http://localhost:3000/api/auth/callback";
 
       // Generate CSRF state token
-      const state = randomBytes(16).toString("hex");
+      const state = generateRandomHex(16);
       const session = c.get("session");
       session.oauthState = state;
       c.set("session", session);
@@ -165,7 +164,7 @@ export function createAuthRouter(): Hono {
       const hasCopilot = await checkCopilotAccess(accessToken);
 
       // Encrypt and store token in session
-      const encryptedToken = encrypt(accessToken);
+      const encryptedToken = await encrypt(accessToken);
       session.encryptedToken = encryptedToken;
       session.user = user;
       session.hasCopilot = hasCopilot;
@@ -221,7 +220,7 @@ export async function requireAuth(c: Context, next: Next) {
 
   try {
     // Decrypt token to verify it's still valid
-    decrypt(session.encryptedToken);
+    await decrypt(session.encryptedToken);
     await next();
   } catch {
     const errorResponse: AuthError = {
