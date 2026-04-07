@@ -1,0 +1,13 @@
+# Cloudflare Pages configuration for route-atlas frontend
+#
+# This file configures the Cloudflare Pages project settings.
+# The frontend is built as a static Angular SPA and deployed to Pages.
+# API requests (/api/*) are proxied to the backend Workers service
+# via _routes.json configuration.
+
+name = "route-atlas"
+compatibility_date = "2024-09-23"
+pages_build_output_dir = "frontend/dist/frontend/browser"
+
+[build]
+command = "pnpm install --frozen-lockfile && pnpm run build:frontend"

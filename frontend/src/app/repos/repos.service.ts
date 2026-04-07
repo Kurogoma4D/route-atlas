@@ -2,11 +2,12 @@ import { Injectable, inject } from "@angular/core";
 import { HttpClient, HttpParams } from "@angular/common/http";
 import { Observable } from "rxjs";
 import type { ReposResponse, BranchesResponse } from "@route-atlas/shared";
+import { environment } from "../../environments/environment";
 
 @Injectable({ providedIn: "root" })
 export class ReposService {
   private http = inject(HttpClient);
-  private apiBase = "/api/repos";
+  private apiBase = `${environment.apiBaseUrl}/api/repos`;
 
   /**
    * Fetch the authenticated user's repositories with pagination.

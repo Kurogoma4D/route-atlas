@@ -1,6 +1,7 @@
 import { Injectable, inject, NgZone } from "@angular/core";
 import { HttpClient } from "@angular/common/http";
 import { Observable } from "rxjs";
+import { environment } from "../../environments/environment";
 
 /**
  * Steps emitted by the SSE progress stream.
@@ -37,7 +38,7 @@ export type SseEvent =
 export class AnalyzeService {
   private http = inject(HttpClient);
   private ngZone = inject(NgZone);
-  private apiBase = "/api/analyze";
+  private apiBase = `${environment.apiBaseUrl}/api/analyze`;
 
   /**
    * Start an analysis job. Returns the jobId.

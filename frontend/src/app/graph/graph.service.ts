@@ -13,11 +13,12 @@ import { Observable, map } from "rxjs";
 import type { ElementDefinition } from "cytoscape";
 import type { AnalysisResult } from "@route-atlas/shared";
 import { convertToCytoscapeElements } from "./graph-converter";
+import { environment } from "../../environments/environment";
 
 @Injectable({ providedIn: "root" })
 export class GraphService {
   private http = inject(HttpClient);
-  private apiBase = "/api/analyze";
+  private apiBase = `${environment.apiBaseUrl}/api/analyze`;
 
   /**
    * Fetch the analysis result for a completed job.

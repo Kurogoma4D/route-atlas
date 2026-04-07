@@ -33,4 +33,7 @@ coverage/
 npm-debug.log*
 pnpm-debug.log*
 
+# Cloudflare
+.wrangler/
+
 .playwright-mcp
