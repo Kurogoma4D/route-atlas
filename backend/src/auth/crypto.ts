@@ -1,9 +1,8 @@
 const IV_LENGTH = 12; // 96-bit IV recommended for AES-GCM
 
-// TODO: For Cloudflare Workers deployment, the secret should be passed via
-// Hono's env bindings (c.env.SESSION_SECRET) rather than process.env.
-function getSessionSecret(): string {
-  const secret = process.env["SESSION_SECRET"];
+function getSessionSecret(sessionSecret?: string): string {
+  const secret =
+    sessionSecret ?? process.env["SESSION_SECRET"];
   if (!secret && process.env["NODE_ENV"] === "production") {
     throw new Error(
       "SESSION_SECRET environment variable must be set in production",
@@ -15,8 +14,8 @@ function getSessionSecret(): string {
 let cachedKey: CryptoKey | null = null;
 let cachedSecret: string | null = null;
 
-async function getEncryptionKey(): Promise<CryptoKey> {
-  const secret = getSessionSecret();
+async function getEncryptionKey(sessionSecret?: string): Promise<CryptoKey> {
+  const secret = getSessionSecret(sessionSecret);
   if (cachedKey && cachedSecret === secret) return cachedKey;
 
   const encoder = new TextEncoder();
@@ -70,8 +69,11 @@ function fromBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-export async function encrypt(plaintext: string): Promise<string> {
-  const key = await getEncryptionKey();
+export async function encrypt(
+  plaintext: string,
+  sessionSecret?: string,
+): Promise<string> {
+  const key = await getEncryptionKey(sessionSecret);
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const encoder = new TextEncoder();
 
@@ -92,8 +94,11 @@ export async function encrypt(plaintext: string): Promise<string> {
   return [toBase64(iv), toBase64(authTag), toBase64(encrypted)].join(":");
 }
 
-export async function decrypt(ciphertext: string): Promise<string> {
-  const key = await getEncryptionKey();
+export async function decrypt(
+  ciphertext: string,
+  sessionSecret?: string,
+): Promise<string> {
+  const key = await getEncryptionKey(sessionSecret);
   const parts = ciphertext.split(":");
   if (parts.length !== 3) {
     throw new Error("Invalid encrypted token format");

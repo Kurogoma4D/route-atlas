@@ -5,6 +5,7 @@ compatibility_flags = ["nodejs_compat"]
 
 [vars]
 NODE_ENV = "production"
+OAUTH_CALLBACK_URL = "https://route-atlas.pages.dev/api/auth/callback"
 
 # KV namespace for session storage
 [[kv_namespaces]]
