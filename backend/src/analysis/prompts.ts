@@ -133,6 +133,19 @@ For Astro projects (file-based routing):
 
 Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the .astro/.md/.mdx/.tsx/.jsx file path.`;
+  } else if (framework === "solid-start") {
+    frameworkInstructions = `Analyze the following SolidStart routing files and extract every screen / route.
+
+For SolidStart projects (file-based routing similar to SvelteKit):
+- Each file under src/routes/ represents a route. The file path maps to the URL route (e.g. src/routes/index.tsx -> /, src/routes/about.tsx -> /about, src/routes/users/[id].tsx -> /users/:id).
+- Files named index.tsx represent the default route for their directory.
+- [param] brackets represent dynamic route segments: src/routes/users/[id].tsx -> /users/:id.
+- [...catchAll] represents catch-all routes.
+- (group) directories (parenthesized names) are route groups — they do NOT appear in the URL path but organize routes logically.
+- API routes (files that only export GET, POST, PUT, DELETE, etc. request handler functions under src/routes/api/) are server endpoints, NOT screens — exclude them from the result.
+
+Use the file-based route path as the "path" (e.g. "/", "/about", "/users/:id").
+Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (isPlainHtml) {
     frameworkInstructions = `Analyze the following plain HTML files. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
@@ -381,6 +394,13 @@ export function buildTurn3Prompt(
 - Form submit handlers that navigate
 - data-astro-reload attribute (forces full page reload)
 - Programmatic navigation in client-side island components (React/Vue/Svelte within client:* directives)`;
+  } else if (framework === "solid-start") {
+    lookForItems = `- <A href="..."> component from @solidjs/router
+- useNavigate() hook for programmatic navigation
+- redirect() in server functions (server-side redirects)
+- <a href="..."> standard anchor tags
+- window.location / location.href assignments
+- Form submit handlers that navigate`;
   } else {
     lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()
@@ -405,7 +425,9 @@ export function buildTurn3Prompt(
               ? `"Link to", "navigate", "router.navigate", "redirect"`
               : framework === "gatsby"
                 ? `"Link to", "navigate", "window.location"`
-                : `"Link", "router.push", "window.location"`;
+                : framework === "solid-start"
+                  ? `"A href", "useNavigate", "redirect"`
+                  : `"Link", "router.push", "window.location"`;
 
   return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
 
