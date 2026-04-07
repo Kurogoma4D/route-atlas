@@ -11,7 +11,7 @@
  * - Nuxt
  * - Gatsby
  * - Angular
- * - React Router
+ * - React Router (library mode & v7 framework mode)
  * - Vue Router
  * - Remix
  * - SvelteKit
@@ -586,6 +586,34 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
       routingFilePatterns: ["app/routes/**/*"],
     }),
   },
+  // React Router v7 framework mode: when react-router is listed AND a
+  // react-router.config.{ts,js} file exists, the project uses file-based
+  // routing identical to Remix.  This must be checked BEFORE the
+  // react-router-dom library-mode rule below.
+  {
+    key: "react-router",
+    resolve: (fileTree) => {
+      const hasFrameworkConfig = fileTree.some(
+        (f) =>
+          f === "react-router.config.ts" || f === "react-router.config.js",
+      );
+      if (hasFrameworkConfig) {
+        return {
+          framework: "remix",
+          routingFilePatterns: ["app/routes/**/*"],
+        };
+      }
+      // Library mode — same patterns as react-router-dom
+      return {
+        framework: "react-router",
+        routingFilePatterns: [
+          "src/**/routes.{tsx,jsx,ts,js}",
+          "src/**/router.{tsx,jsx,ts,js}",
+          "src/**/*.routes.{tsx,jsx,ts,js}",
+        ],
+      };
+    },
+  },
   {
     key: "@sveltejs/kit",
     resolve: () => ({
@@ -654,7 +682,12 @@ const FRAMEWORK_RULES: FrameworkRule[] = [
     key: "vue-router",
     resolve: () => ({
       framework: "vue-router",
-      routingFilePatterns: ["router/index.{ts,js}"],
+      routingFilePatterns: [
+        "router/index.{ts,js}",
+        "src/router/index.{ts,js}",
+        "src/router/routes.{ts,js}",
+        "src/router/**/*.{ts,js}",
+      ],
     }),
   },
 ];

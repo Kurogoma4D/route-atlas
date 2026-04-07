@@ -233,6 +233,64 @@ describe("detectFramework", () => {
         ]),
       );
     });
+
+    it("detects React Router v7 framework mode when react-router.config.ts exists", () => {
+      const result = detectFramework(
+        pkg({ react: "18.0.0", "react-router": "7.0.0" }),
+        ["react-router.config.ts", "app/routes/index.tsx", "package.json"],
+      );
+      expect(result.framework).toBe("remix");
+      expect(result.routingFilePatterns).toContain("app/routes/**/*");
+    });
+
+    it("detects React Router v7 framework mode when react-router.config.js exists", () => {
+      const result = detectFramework(
+        pkg({ react: "18.0.0", "react-router": "7.0.0" }),
+        ["react-router.config.js", "app/routes/index.tsx", "package.json"],
+      );
+      expect(result.framework).toBe("remix");
+      expect(result.routingFilePatterns).toContain("app/routes/**/*");
+    });
+
+    it("detects React Router v7 library mode when no config file exists", () => {
+      const result = detectFramework(
+        pkg({ react: "18.0.0", "react-router": "7.0.0" }),
+        ["src/App.tsx", "package.json"],
+      );
+      expect(result.framework).toBe("react-router");
+      expect(result.routingFilePatterns).toEqual(
+        expect.arrayContaining([
+          "src/**/routes.{tsx,jsx,ts,js}",
+          "src/**/router.{tsx,jsx,ts,js}",
+          "src/**/*.routes.{tsx,jsx,ts,js}",
+        ]),
+      );
+    });
+
+    it("prefers @remix-run/react over react-router framework mode", () => {
+      const result = detectFramework(
+        pkg({
+          "@remix-run/react": "2.0.0",
+          "react-router": "7.0.0",
+          react: "18.0.0",
+        }),
+        ["react-router.config.ts", "app/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("remix");
+    });
+
+    it("prefers react-router framework mode over react-router-dom library mode", () => {
+      const result = detectFramework(
+        pkg({
+          "react-router": "7.0.0",
+          "react-router-dom": "6.0.0",
+          react: "18.0.0",
+        }),
+        ["react-router.config.ts", "app/routes/index.tsx"],
+      );
+      expect(result.framework).toBe("remix");
+      expect(result.routingFilePatterns).toContain("app/routes/**/*");
+    });
   });
 
   describe("Vue Router", () => {
@@ -242,6 +300,15 @@ describe("detectFramework", () => {
       );
       expect(result.framework).toBe("vue-router");
       expect(result.routingFilePatterns).toContain("router/index.{ts,js}");
+    });
+
+    it("includes src/router patterns for common project structures", () => {
+      const result = detectFramework(
+        pkg({ vue: "3.0.0", "vue-router": "4.0.0" }),
+      );
+      expect(result.routingFilePatterns).toContain("src/router/index.{ts,js}");
+      expect(result.routingFilePatterns).toContain("src/router/routes.{ts,js}");
+      expect(result.routingFilePatterns).toContain("src/router/**/*.{ts,js}");
     });
   });
 
