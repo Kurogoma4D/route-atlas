@@ -91,13 +91,30 @@ export interface AnalyzeRouterDeps {
   jobsKV?: KVLike;
 }
 
+/**
+ * Resolve a JobStore for the current request.
+ * Prefers the JOBS KV binding from the Workers env, then explicit deps,
+ * and falls back to an in-memory store for local dev.
+ */
+function resolveJobStore(
+  c: { env: unknown },
+  deps: AnalyzeRouterDeps,
+): JobStore {
+  const envKV = (c.env as Record<string, unknown> | null)?.["JOBS"] as
+    | KVLike
+    | undefined;
+  if (envKV) return new JobStore(envKV);
+  if (deps.jobStore) return deps.jobStore;
+  const kv = deps.jobsKV ?? getInMemoryJobKV();
+  return new JobStore(kv);
+}
+
 export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
   const router = new Hono();
-  const jobsKV = deps.jobsKV ?? getInMemoryJobKV();
-  const jobStore = deps.jobStore ?? new JobStore(jobsKV);
 
   // POST /api/analyze — Start analysis job
   router.post("/", async (c) => {
+    const jobStore = resolveJobStore(c, deps);
     let body: AnalyzeRequestBody;
     try {
       body = (await c.req.json()) as AnalyzeRequestBody;
@@ -162,7 +179,21 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
 
     if (queue) {
       // Cloudflare Queue available — enqueue and return immediately
-      await queue.send(message);
+      try {
+        await queue.send(message);
+      } catch (err) {
+        console.error(`[analyze] Failed to enqueue job ${jobId}:`, err);
+        await jobStore
+          .sendError(jobId, "Failed to enqueue analysis job")
+          .catch(console.error);
+        return c.json(
+          {
+            error: "queue_error",
+            message: "Failed to enqueue analysis job. Please try again later.",
+          },
+          500,
+        );
+      }
     } else {
       // No queue binding (local dev) — run pipeline inline in background
       runPipeline({
@@ -183,6 +214,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
 
   // GET /api/analyze/:jobId/result — Retrieve completed analysis result
   router.get("/:jobId/result", async (c) => {
+    const jobStore = resolveJobStore(c, deps);
     const jobId = c.req.param("jobId");
     const job = await jobStore.getJob(jobId);
 
@@ -224,6 +256,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
 
   // GET /api/analyze/:jobId — Poll job state (JSON)
   router.get("/:jobId", async (c) => {
+    const jobStore = resolveJobStore(c, deps);
     const jobId = c.req.param("jobId");
     const job = await jobStore.getJob(jobId);
 
@@ -272,11 +305,17 @@ export async function handleAnalyzeQueue(
   jobStore: JobStore,
   clientManager: CopilotClientManager,
 ): Promise<void> {
-  await runPipeline({
-    ...message,
-    jobStore,
-    clientManager,
-  });
+  try {
+    await runPipeline({
+      ...message,
+      jobStore,
+      clientManager,
+    });
+  } catch (err) {
+    console.error(`[queue] Pipeline failed for job ${message.jobId}:`, err);
+    const errorMsg = err instanceof Error ? err.message : "Analysis failed";
+    await jobStore.sendError(message.jobId, errorMsg).catch(console.error);
+  }
 }
 
 // ---------------------------------------------------------------------------

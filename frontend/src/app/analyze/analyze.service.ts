@@ -87,11 +87,8 @@ export class AnalyzeService {
   pollJob(jobId: string): Observable<AnalysisEvent> {
     const pollUrl = `${this.apiBase}/${encodeURIComponent(jobId)}`;
     const resultUrl = `${this.apiBase}/${encodeURIComponent(jobId)}/result`;
-    let completed = false;
 
     return timer(0, POLL_INTERVAL_MS).pipe(
-      // Stop emitting once the job is in a terminal state
-      takeWhile(() => !completed),
       switchMap(() =>
         this.http.get<JobPollResponse>(pollUrl, { withCredentials: true }).pipe(
           catchError(() =>
@@ -106,7 +103,6 @@ export class AnalyzeService {
       ),
       switchMap((response): Observable<AnalysisEvent> => {
         if (response.status === "complete") {
-          completed = true;
           // Fetch the full result
           return this.http
             .get<unknown>(resultUrl, { withCredentials: true })
@@ -127,7 +123,6 @@ export class AnalyzeService {
         }
 
         if (response.status === "error") {
-          completed = true;
           return of<AnalysisEvent>({
             type: "error",
             data: { message: response.error ?? response.message },
@@ -143,6 +138,8 @@ export class AnalyzeService {
           },
         });
       }),
+      // Complete synchronously after a terminal event (inclusive mode)
+      takeWhile((event) => event.type === "progress", true),
     );
   }
 
