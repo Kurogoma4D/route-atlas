@@ -1,52 +1,62 @@
-name: Deploy Backend to Cloudflare Workers
+name: Deploy Backend to Cloud Run
 
 on:
   push:
     branches:
       - main
 
+env:
+  GCP_PROJECT: route-atlas
+  GCP_REGION: asia-northeast1
+  SERVICE_NAME: route-atlas-api
+  IMAGE: asia-northeast1-docker.pkg.dev/route-atlas/route-atlas/api
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      deployments: write
+      id-token: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
         with:
-          node-version: "20"
-          cache: "pnpm"
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build shared library
-        run: pnpm run build:shared
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker asia-northeast1-docker.pkg.dev --quiet
 
-      - name: Build backend
-        run: pnpm run build:backend
-
-      - name: Set Cloudflare Workers secrets
-        working-directory: backend
+      - name: Build and push Docker image
         run: |
-          echo '{"GITHUB_CLIENT_ID":"${{ secrets.CLIENT_ID }}","GITHUB_CLIENT_SECRET":"${{ secrets.CLIENT_SECRET }}","SESSION_SECRET":"${{ secrets.SESSION_SECRET }}"}' | pnpm wrangler secret bulk
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          docker build \
+            -f backend/Dockerfile \
+            -t ${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.IMAGE }}:latest \
+            .
+          docker push ${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.IMAGE }}:latest
 
-      - name: Deploy to Cloudflare Workers
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          packageManager: pnpm
-          workingDirectory: backend
-          command: deploy
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.IMAGE }}:${{ github.sha }} \
+            --region ${{ env.GCP_REGION }} \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --min-instances 0 \
+            --max-instances 4 \
+            --timeout 600 \
+            --set-env-vars "NODE_ENV=production" \
+            --set-secrets "GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest,GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest,SESSION_SECRET=SESSION_SECRET:latest" \
+            --set-env-vars "OAUTH_CALLBACK_URL=${{ secrets.OAUTH_CALLBACK_URL }}" \
+            --set-env-vars "ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" \
+            --quiet

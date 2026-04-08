@@ -11,36 +11,36 @@ const GITHUB_API_COPILOT_URL =
   "https://api.github.com/copilot_internal/v2/token";
 const GITHUB_USER_AGENT = "route-atlas/1.0";
 
-type EnvBindings = Record<string, unknown>;
-
-function getClientId(env?: EnvBindings): string {
-  const id =
-    (env?.["GITHUB_CLIENT_ID"] as string | undefined) ??
-    process.env["GITHUB_CLIENT_ID"];
+function getClientId(): string {
+  const id = process.env["GITHUB_CLIENT_ID"];
   if (!id) {
     throw new Error("GITHUB_CLIENT_ID environment variable is not set");
   }
   return id;
 }
 
-function getClientSecret(env?: EnvBindings): string {
-  const secret =
-    (env?.["GITHUB_CLIENT_SECRET"] as string | undefined) ??
-    process.env["GITHUB_CLIENT_SECRET"];
+function getClientSecret(): string {
+  const secret = process.env["GITHUB_CLIENT_SECRET"];
   if (!secret) {
     throw new Error("GITHUB_CLIENT_SECRET environment variable is not set");
   }
   return secret;
 }
 
+function getCallbackUrl(): string {
+  return (
+    process.env["OAUTH_CALLBACK_URL"] ??
+    "http://localhost:3000/api/auth/callback"
+  );
+}
+
 export async function exchangeCodeForToken(
   code: string,
-  env?: EnvBindings,
   redirectUri?: string,
 ): Promise<string> {
   const body: Record<string, string> = {
-    client_id: getClientId(env),
-    client_secret: getClientSecret(env),
+    client_id: getClientId(),
+    client_secret: getClientSecret(),
     code,
   };
   if (redirectUri) {
@@ -120,12 +120,8 @@ export function createAuthRouter(): Hono {
   // GET /api/auth/github - Redirect to GitHub OAuth authorize URL
   router.get("/github", (c) => {
     try {
-      const env = c.env as EnvBindings | undefined;
-      const clientId = getClientId(env);
-      const callbackUrl =
-        (env?.["OAUTH_CALLBACK_URL"] as string | undefined) ??
-        process.env["OAUTH_CALLBACK_URL"] ??
-        "http://localhost:3000/api/auth/callback";
+      const clientId = getClientId();
+      const callbackUrl = getCallbackUrl();
 
       // Generate CSRF state token
       const state = generateRandomHex(16);
@@ -175,16 +171,8 @@ export function createAuthRouter(): Hono {
     }
 
     try {
-      const cbEnv = c.env as EnvBindings | undefined;
-      const callbackUrl =
-        (cbEnv?.["OAUTH_CALLBACK_URL"] as string | undefined) ??
-        process.env["OAUTH_CALLBACK_URL"] ??
-        "http://localhost:3000/api/auth/callback";
-      const accessToken = await exchangeCodeForToken(
-        code,
-        cbEnv,
-        callbackUrl,
-      );
+      const callbackUrl = getCallbackUrl();
+      const accessToken = await exchangeCodeForToken(code, callbackUrl);
 
       // Fetch user info to validate the token
       const user = await fetchGitHubUser(accessToken);
@@ -193,9 +181,7 @@ export function createAuthRouter(): Hono {
       const hasCopilot = await checkCopilotAccess(accessToken);
 
       // Encrypt and store token in session
-      const env = c.env as EnvBindings | undefined;
-      const sessionSecret = env?.["SESSION_SECRET"] as string | undefined;
-      const encryptedToken = await encrypt(accessToken, sessionSecret);
+      const encryptedToken = await encrypt(accessToken);
       session.encryptedToken = encryptedToken;
       session.user = user;
       session.hasCopilot = hasCopilot;
@@ -205,8 +191,7 @@ export function createAuthRouter(): Hono {
     } catch (err) {
       console.error("[OAuth] Callback error:", err);
       c.set("session", session);
-      const detail =
-        err instanceof Error ? err.message : "unknown";
+      const detail = err instanceof Error ? err.message : "unknown";
       return c.redirect(
         `/login?error=token_exchange_failed&detail=${encodeURIComponent(detail)}`,
       );
@@ -256,9 +241,7 @@ export async function requireAuth(c: Context, next: Next) {
 
   try {
     // Decrypt token to verify it's still valid
-    const env = c.env as Record<string, unknown> | undefined;
-    const sessionSecret = env?.["SESSION_SECRET"] as string | undefined;
-    await decrypt(session.encryptedToken, sessionSecret);
+    await decrypt(session.encryptedToken);
     await next();
   } catch {
     const errorResponse: AuthError = {

@@ -11,18 +11,14 @@ import { sessionMiddleware } from "./auth/session.js";
 export function createApp(analyzeDeps?: AnalyzeRouterDeps): Hono {
   const app = new Hono();
 
-  const isProduction =
-    typeof process !== "undefined" &&
-    process.env?.["NODE_ENV"] === "production";
+  const isProduction = process.env["NODE_ENV"] === "production";
 
   const frontendOrigin =
-    (typeof process !== "undefined" && process.env?.["FRONTEND_ORIGIN"]) ||
-    "http://localhost:4200";
+    process.env["FRONTEND_ORIGIN"] || "http://localhost:4200";
 
-  const envOrigins =
-    typeof process !== "undefined"
-      ? process.env?.["ALLOWED_ORIGINS"]?.split(",").map((o) => o.trim())
-      : undefined;
+  const envOrigins = process.env["ALLOWED_ORIGINS"]
+    ?.split(",")
+    .map((o) => o.trim());
 
   const allowedOrigins: string[] =
     isProduction && envOrigins ? envOrigins : [frontendOrigin];
@@ -35,7 +31,7 @@ export function createApp(analyzeDeps?: AnalyzeRouterDeps): Hono {
     }),
   );
 
-  // Session middleware (cookie-based)
+  // Session middleware (cookie-based, in-memory store)
   app.use("/*", sessionMiddleware());
 
   // Health check

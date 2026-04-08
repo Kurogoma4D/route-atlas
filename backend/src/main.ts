@@ -1,63 +1,13 @@
+import { serve } from "@hono/node-server";
 import { createApp } from "./server.js";
 import { CopilotClientManager } from "./analysis/copilot-client.js";
-import { JobStore } from "./analyze/job-store.js";
-import { handleAnalyzeQueue } from "./analyze/routes.js";
-import type { AnalyzeQueueMessage } from "./analyze/routes.js";
 
 const clientManager = new CopilotClientManager();
 
 const app = createApp({ clientManager });
 
-// ---------------------------------------------------------------------------
-// Cloudflare Workers entry point
-// ---------------------------------------------------------------------------
-export default {
-  fetch: app.fetch,
+const PORT = Number(process.env["PORT"] ?? 8080);
 
-  /**
-   * Queue consumer handler.
-   * Cloudflare Workers will call this when messages arrive on ANALYZE_QUEUE.
-   */
-  async queue(
-    batch: MessageBatch<AnalyzeQueueMessage>,
-    env: { JOBS: KVNamespace; SESSION_SECRET?: string },
-  ) {
-    console.log(`[queue] Received batch of ${batch.messages.length} messages`);
-    const store = new JobStore(env.JOBS);
-    for (const msg of batch.messages) {
-      console.log(`[queue] Processing job: ${msg.body.jobId}`);
-      try {
-        await handleAnalyzeQueue(
-          msg.body,
-          store,
-          clientManager,
-          env.SESSION_SECRET,
-        );
-        console.log(`[queue] Job completed: ${msg.body.jobId}`);
-      } catch (err) {
-        console.error(`[queue] Job failed: ${msg.body.jobId}`, err);
-      }
-      msg.ack();
-    }
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Local development: start a Node.js HTTP server when run directly.
-// In Cloudflare Workers, navigator.userAgent is "Cloudflare-Workers".
-// ---------------------------------------------------------------------------
-const isWorkers =
-  typeof navigator !== "undefined" &&
-  navigator.userAgent === "Cloudflare-Workers";
-
-if (!isWorkers) {
-  try {
-    const PORT = process.env?.["PORT"] ?? 3000;
-    const { serve } = await import("@hono/node-server");
-    serve({ fetch: app.fetch, port: Number(PORT) }, (info) => {
-      console.log(`Server running on http://localhost:${info.port}`);
-    });
-  } catch {
-    // Ignore — module resolution may fail in non-Node runtimes
-  }
-}
+serve({ fetch: app.fetch, port: PORT }, (info) => {
+  console.log(`Server running on http://localhost:${info.port}`);
+});
