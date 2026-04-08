@@ -16,5 +16,7 @@
     "lint": "eslint .",
     "format:check": "prettier --check ."
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "typescript": "~5.8.0"
+  }
 }

@@ -25,7 +25,7 @@ RUN pnpm --filter @route-atlas/shared build
 RUN pnpm --filter @route-atlas/backend build
 
 # Prune dev dependencies for production
-RUN pnpm --filter @route-atlas/backend --prod deploy /app/pruned
+RUN pnpm --filter @route-atlas/backend --prod deploy --legacy /app/pruned
 
 # Stage 2: production image
 FROM node:20-slim AS runner
