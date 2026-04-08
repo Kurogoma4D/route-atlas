@@ -535,7 +535,7 @@ describe("github-file-fetcher", () => {
   // fetchFileContents
   // -------------------------------------------------------------------------
   describe("fetchFileContents", () => {
-    it("fetches contents for multiple files", async () => {
+    it("fetches contents for multiple files via Blob API", async () => {
       const files = [
         makeTreeEntry("src/a.ts", { size: 100 }),
         makeTreeEntry("src/b.ts", { size: 200 }),
@@ -544,25 +544,19 @@ describe("github-file-fetcher", () => {
       vi.mocked(fetch)
         .mockResolvedValueOnce(
           mockFetchResponse({
-            name: "a.ts",
-            path: "src/a.ts",
-            sha: "sha_a",
-            size: 100,
-            type: "file",
+            sha: files[0].sha,
             content: base64Encode("file a"),
             encoding: "base64",
-          } satisfies ContentsResponse),
+            size: 100,
+          } satisfies BlobResponse),
         )
         .mockResolvedValueOnce(
           mockFetchResponse({
-            name: "b.ts",
-            path: "src/b.ts",
-            sha: "sha_b",
-            size: 200,
-            type: "file",
+            sha: files[1].sha,
             content: base64Encode("file b"),
             encoding: "base64",
-          } satisfies ContentsResponse),
+            size: 200,
+          } satisfies BlobResponse),
         );
 
       const results = await fetchFileContents("owner", "repo", files, TOKEN);
@@ -570,48 +564,81 @@ describe("github-file-fetcher", () => {
       expect(results).toHaveLength(2);
       expect(results[0]).toEqual({ path: "src/a.ts", content: "file a" });
       expect(results[1]).toEqual({ path: "src/b.ts", content: "file b" });
+
+      // Verify Blob API was used (not Contents API)
+      expect(fetch).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(fetch).mock.calls[0][0]).toContain("/git/blobs/");
+      expect(vi.mocked(fetch).mock.calls[1][0]).toContain("/git/blobs/");
     });
 
-    it("handles a mix of small and large files", async () => {
+    it("respects maxFiles option to limit fetched files", async () => {
       const files = [
-        makeTreeEntry("src/small.ts", { size: 100 }),
-        makeTreeEntry("src/large.ts", { size: 2_000_000 }),
+        makeTreeEntry("src/a.ts", { size: 100 }),
+        makeTreeEntry("src/b.ts", { size: 200 }),
+        makeTreeEntry("src/c.ts", { size: 300 }),
       ];
 
-      // Small file via Contents API
-      vi.mocked(fetch).mockResolvedValueOnce(
-        mockFetchResponse({
-          name: "small.ts",
-          path: "src/small.ts",
-          sha: "sha_small",
-          size: 100,
-          type: "file",
-          content: base64Encode("small content"),
-          encoding: "base64",
-        } satisfies ContentsResponse),
-      );
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(
+          mockFetchResponse({
+            sha: files[0].sha,
+            content: base64Encode("file a"),
+            encoding: "base64",
+            size: 100,
+          } satisfies BlobResponse),
+        )
+        .mockResolvedValueOnce(
+          mockFetchResponse({
+            sha: files[1].sha,
+            content: base64Encode("file b"),
+            encoding: "base64",
+            size: 200,
+          } satisfies BlobResponse),
+        );
 
-      // Large file via Blob API
+      const results = await fetchFileContents("owner", "repo", files, TOKEN, {
+        maxFiles: 2,
+      });
+
+      expect(results).toHaveLength(2);
+      expect(results[0]).toEqual({ path: "src/a.ts", content: "file a" });
+      expect(results[1]).toEqual({ path: "src/b.ts", content: "file b" });
+      // Third file should not have been fetched
+      expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("fetches all files when maxFiles exceeds file count", async () => {
+      const files = [makeTreeEntry("src/a.ts", { size: 100 })];
+
       vi.mocked(fetch).mockResolvedValueOnce(
         mockFetchResponse({
-          sha: "sha_large",
-          content: base64Encode("large content"),
+          sha: files[0].sha,
+          content: base64Encode("file a"),
           encoding: "base64",
-          size: 2_000_000,
+          size: 100,
         } satisfies BlobResponse),
       );
 
-      const results = await fetchFileContents("owner", "repo", files, TOKEN);
+      const results = await fetchFileContents("owner", "repo", files, TOKEN, {
+        maxFiles: 10,
+      });
 
-      expect(results).toHaveLength(2);
-      expect(results[0]).toEqual({
-        path: "src/small.ts",
-        content: "small content",
+      expect(results).toHaveLength(1);
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+    it("returns empty array when maxFiles is 0", async () => {
+      const files = [
+        makeTreeEntry("src/a.ts", { size: 100 }),
+        makeTreeEntry("src/b.ts", { size: 200 }),
+      ];
+
+      const results = await fetchFileContents("owner", "repo", files, TOKEN, {
+        maxFiles: 0,
       });
-      expect(results[1]).toEqual({
-        path: "src/large.ts",
-        content: "large content",
-      });
+
+      expect(results).toHaveLength(0);
+      expect(fetch).not.toHaveBeenCalled();
     });
   });
 });

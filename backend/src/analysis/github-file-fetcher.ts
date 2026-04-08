@@ -88,13 +88,11 @@ export class GitHubApiError extends Error {
 const GITHUB_API_BASE = "https://api.github.com";
 
 /** Maximum number of retries on rate-limit (HTTP 403 / 429). */
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 1;
 
 /** Base delay (ms) for exponential backoff between retries. */
 const BASE_BACKOFF_MS = 1000;
 
-/** Contents API file size limit (1 MB). Files larger need Blob API. */
-const CONTENTS_API_SIZE_LIMIT = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -222,7 +220,7 @@ export async function fetchSingleFileContent(
   ref?: string,
 ): Promise<string> {
   const isLargeFile =
-    file.size !== undefined && file.size > CONTENTS_API_SIZE_LIMIT;
+    file.size !== undefined && file.size > 1_000_000;
 
   if (isLargeFile) {
     return fetchViaBlobApi(owner, repo, file.sha, token);
@@ -246,28 +244,30 @@ export async function fetchSingleFileContent(
 }
 
 /**
- * Fetch file contents for multiple files.
+ * Fetch file contents for multiple files using the Git Blobs API.
  *
- * Files exceeding the Contents API size limit are automatically fetched
- * via the Blob API.
+ * Each file requires exactly one API call via `GET /repos/{owner}/{repo}/git/blobs/{sha}`.
+ * Since the tree entries already contain the blob SHA, this avoids the Contents API
+ * entirely and reduces the chance of needing fallback requests.
+ *
+ * When `maxFiles` is specified, only the first `maxFiles` entries are fetched.
+ * Callers should pre-sort / prioritize the `files` array before passing it in.
  */
 export async function fetchFileContents(
   owner: string,
   repo: string,
   files: TreeEntry[],
   token: string,
-  options?: { ref?: string },
+  options?: { maxFiles?: number },
 ): Promise<FileWithContent[]> {
+  const limit =
+    options?.maxFiles !== undefined ? options.maxFiles : files.length;
+  const toFetch = files.slice(0, limit);
+
   const results: FileWithContent[] = [];
 
-  for (const file of files) {
-    const content = await fetchSingleFileContent(
-      owner,
-      repo,
-      file,
-      token,
-      options?.ref,
-    );
+  for (const file of toFetch) {
+    const content = await fetchViaBlobApi(owner, repo, file.sha, token);
     results.push({ path: file.path, content });
   }
 
