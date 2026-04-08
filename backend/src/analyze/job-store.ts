@@ -136,7 +136,7 @@ export class JobStore {
       expirationTtl: JOB_TTL_SECONDS,
     });
 
-    console.log(`[JobStore] sendComplete: ${jobId} (routes: ${result.routes?.length ?? 0})`);
+    console.log(`[JobStore] sendComplete: ${jobId}`);
     // Remove from active jobs
     await this.removeActiveJob(state.userId, jobId);
   }
