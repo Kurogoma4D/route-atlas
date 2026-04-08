@@ -1,14 +1,14 @@
 /**
  * Analysis API Routes (Polling-based Progress)
  *
- * POST /api/analyze              — Enqueue an analysis job, returns { jobId }
- * GET  /api/analyze/:jobId        — Read job state from KV, return JSON
- * GET  /api/analyze/:jobId/result — Return result when complete
+ * POST /api/analyze              -- Start an analysis job, returns { jobId }
+ * GET  /api/analyze/:jobId        -- Read job state, return JSON
+ * GET  /api/analyze/:jobId/result -- Return result when complete
  *
- * The analysis pipeline runs either via a Cloudflare Queue consumer
- * or inline (for local dev without Queues).
+ * The analysis pipeline runs in-process on Cloud Run (no queue needed;
+ * Cloud Run supports up to 60-minute request timeouts).
  *
- * Reference: SPEC.md §6.1, §6.2, §6.3
+ * Reference: SPEC.md S6.1, S6.2, S6.3
  */
 
 import { Hono } from "hono";
@@ -44,30 +44,7 @@ import {
 import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
 import { JobStore, getInMemoryJobKV } from "./job-store.js";
-import type { KVLike } from "../auth/session.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
-
-// ---------------------------------------------------------------------------
-// Queue message shape
-// ---------------------------------------------------------------------------
-
-export interface AnalyzeQueueMessage {
-  jobId: string;
-  userId: string;
-  owner: string;
-  repo: string;
-  branch: string;
-  model: SupportedModel;
-  encryptedToken: string;
-}
-
-// ---------------------------------------------------------------------------
-// Minimal Queue interface for type safety
-// ---------------------------------------------------------------------------
-
-export interface QueueLike {
-  send(message: AnalyzeQueueMessage): Promise<void>;
-}
 
 // ---------------------------------------------------------------------------
 // Request body shape
@@ -87,34 +64,23 @@ interface AnalyzeRequestBody {
 export interface AnalyzeRouterDeps {
   clientManager: CopilotClientManager;
   jobStore?: JobStore;
-  queue?: QueueLike;
-  jobsKV?: KVLike;
 }
 
 /**
  * Resolve a JobStore for the current request.
- * Prefers the JOBS KV binding from the Workers env, then explicit deps,
- * and falls back to an in-memory store for local dev.
+ * Uses the explicitly provided store or falls back to an in-memory store.
  */
-function resolveJobStore(
-  c: { env: unknown },
-  deps: AnalyzeRouterDeps,
-): JobStore {
-  const envKV = (c.env as Record<string, unknown> | null)?.["JOBS"] as
-    | KVLike
-    | undefined;
-  if (envKV) return new JobStore(envKV);
+function resolveJobStore(deps: AnalyzeRouterDeps): JobStore {
   if (deps.jobStore) return deps.jobStore;
-  const kv = deps.jobsKV ?? getInMemoryJobKV();
-  return new JobStore(kv);
+  return new JobStore(getInMemoryJobKV());
 }
 
 export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
   const router = new Hono();
 
-  // POST /api/analyze — Start analysis job
+  // POST /api/analyze -- Start analysis job
   router.post("/", async (c) => {
-    const jobStore = resolveJobStore(c, deps);
+    const jobStore = resolveJobStore(deps);
     let body: AnalyzeRequestBody;
     try {
       body = (await c.req.json()) as AnalyzeRequestBody;
@@ -160,63 +126,33 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
       );
     }
 
-    // Try to enqueue via Cloudflare Queue binding; fall back to inline execution
-    const queue: QueueLike | undefined =
-      deps.queue ??
-      ((c.env as Record<string, unknown>)?.["ANALYZE_QUEUE"] as
-        | QueueLike
-        | undefined);
+    const encryptedToken = session.encryptedToken!;
 
-    const message: AnalyzeQueueMessage = {
+    // Run pipeline in-process (fire-and-forget for the HTTP response)
+    runPipeline({
       jobId,
       userId,
       owner: body.owner,
       repo: body.repo,
       branch: body.branch,
       model,
-      encryptedToken: session.encryptedToken!,
-    };
-
-    if (queue) {
-      // Cloudflare Queue available — enqueue and return immediately
-      try {
-        await queue.send(message);
-      } catch (err) {
-        console.error(`[analyze] Failed to enqueue job ${jobId}:`, err);
-        await jobStore
-          .sendError(jobId, "Failed to enqueue analysis job")
-          .catch(console.error);
-        return c.json(
-          {
-            error: "queue_error",
-            message: "Failed to enqueue analysis job. Please try again later.",
-          },
-          500,
-        );
-      }
-    } else {
-      // No queue binding (local dev) — run pipeline inline in background
-      const env = c.env as Record<string, unknown> | undefined;
-      runPipeline({
-        ...message,
-        jobStore,
-        clientManager: deps.clientManager,
-        sessionSecret: env?.["SESSION_SECRET"] as string | undefined,
-      }).catch((err) => {
-        console.error(
-          `[analyze] Unhandled pipeline error for job ${jobId}:`,
-          err,
-        );
-      });
-    }
+      encryptedToken,
+      jobStore,
+      clientManager: deps.clientManager,
+    }).catch((err) => {
+      console.error(
+        `[analyze] Unhandled pipeline error for job ${jobId}:`,
+        err,
+      );
+    });
 
     // Return jobId immediately
     return c.json({ jobId }, 202);
   });
 
-  // GET /api/analyze/:jobId/result — Retrieve completed analysis result
+  // GET /api/analyze/:jobId/result -- Retrieve completed analysis result
   router.get("/:jobId/result", async (c) => {
-    const jobStore = resolveJobStore(c, deps);
+    const jobStore = resolveJobStore(deps);
     const jobId = c.req.param("jobId");
     const job = await jobStore.getJob(jobId);
 
@@ -256,9 +192,9 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
     return c.json(job.result);
   });
 
-  // GET /api/analyze/:jobId — Poll job state (JSON)
+  // GET /api/analyze/:jobId -- Poll job state (JSON)
   router.get("/:jobId", async (c) => {
-    const jobStore = resolveJobStore(c, deps);
+    const jobStore = resolveJobStore(deps);
     const jobId = c.req.param("jobId");
     const job = await jobStore.getJob(jobId);
 
@@ -299,31 +235,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
 }
 
 // ---------------------------------------------------------------------------
-// Queue consumer: processes analysis tasks from the queue
-// ---------------------------------------------------------------------------
-
-export async function handleAnalyzeQueue(
-  message: AnalyzeQueueMessage,
-  jobStore: JobStore,
-  clientManager: CopilotClientManager,
-  sessionSecret?: string,
-): Promise<void> {
-  try {
-    await runPipeline({
-      ...message,
-      jobStore,
-      clientManager,
-      sessionSecret,
-    });
-  } catch (err) {
-    console.error(`[queue] Pipeline failed for job ${message.jobId}:`, err);
-    const errorMsg = err instanceof Error ? err.message : "Analysis failed";
-    await jobStore.sendError(message.jobId, errorMsg).catch(console.error);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Background pipeline runner
+// Background pipeline runner (in-process, no subrequest budget)
 // ---------------------------------------------------------------------------
 
 interface PipelineParams {
@@ -336,63 +248,11 @@ interface PipelineParams {
   encryptedToken: string;
   jobStore: JobStore;
   clientManager: CopilotClientManager;
-  sessionSecret?: string;
-}
-
-// ---------------------------------------------------------------------------
-// Subrequest budget tracker
-// ---------------------------------------------------------------------------
-
-/**
- * Cloudflare Workers limits each invocation to 50 subrequests.
- * We track how many GitHub API calls we have made and cap file fetches
- * so that we never exceed the limit.
- *
- * Budget allocation (total = 50):
- *   1  fetchFileTree (Trees API)
- *   ~5 framework detection files (package.json, Gradle, pubspec, iOS samples)
- *  10  routing files
- *  ~19 component files (remaining budget)
- *  ~15 reserved for KV writes (~6-7), retries, decrypt overhead
- */
-const SUBREQUEST_LIMIT = 50;
-const RESERVED_FOR_OVERHEAD = 15; // KV writes (~6-7) + retries + decrypt overhead
-
-/**
- * Mutable budget tracker passed through the pipeline.
- * Each stage deducts from `remaining` before fetching.
- */
-interface SubrequestBudget {
-  remaining: number;
-}
-
-function createBudget(): SubrequestBudget {
-  return { remaining: SUBREQUEST_LIMIT - RESERVED_FOR_OVERHEAD };
-}
-
-function budgetedMaxFiles(
-  budget: SubrequestBudget,
-  desired: number,
-  stageName?: string,
-): number {
-  const allowed = Math.max(0, budget.remaining);
-  const result = Math.min(desired, allowed);
-  if (result === 0 && desired > 0) {
-    console.warn(
-      `[subrequest-budget] Budget exhausted — skipping stage${stageName ? ` "${stageName}"` : ""} (wanted ${desired} files, 0 remaining)`,
-    );
-  }
-  return result;
-}
-
-function deductBudget(budget: SubrequestBudget, count: number): void {
-  budget.remaining -= count;
 }
 
 async function runPipeline(params: PipelineParams): Promise<void> {
   const {
     jobId,
-    userId,
     owner,
     repo,
     branch,
@@ -400,12 +260,10 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     encryptedToken,
     jobStore,
     clientManager,
-    sessionSecret,
   } = params;
 
   try {
-    const token = await decrypt(encryptedToken, sessionSecret);
-    const budget = createBudget();
+    const token = await decrypt(encryptedToken);
 
     // Step 1: Detect framework
     await jobStore.sendProgress(jobId, {
@@ -414,7 +272,6 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     });
 
     const { files: allFiles } = await fetchFileTree(owner, repo, branch, token);
-    deductBudget(budget, 1); // Trees API call
     const allPaths = allFiles.map((f) => f.path);
 
     // Determine platform (web vs android) and detect framework
@@ -423,35 +280,28 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     let detectionResult: FrameworkDetectionResult;
 
     if (platform === "android") {
-      // For Android projects, fetch Gradle build files to detect the navigation library
       const gradlePatterns = ["**/build.gradle", "**/build.gradle.kts"];
       const gradleEntries = filterFilesByPatterns(
         allFiles,
         gradlePatterns,
       ).filter((f) => !isExcludedPath(f.path));
-      const maxGradle = budgetedMaxFiles(budget, gradleEntries.length, "gradle-detection");
       const gradleFiles = await fetchFileContents(
         owner,
         repo,
         gradleEntries,
         token,
-        { maxFiles: maxGradle },
+        { maxFiles: 50 },
       );
-      deductBudget(budget, gradleFiles.length);
       detectionResult = detectAndroidFramework(gradleFiles);
     } else if (platform === "flutter") {
-      // For Flutter projects, fetch pubspec.yaml to detect the routing library
       const pubspecEntry = allFiles.find((f) => f.path === "pubspec.yaml");
       if (pubspecEntry) {
-        const maxPubspec = budgetedMaxFiles(budget, 1, "pubspec-detection");
         const pubspecContents = await fetchFileContents(
           owner,
           repo,
           [pubspecEntry],
           token,
-          { maxFiles: maxPubspec },
         );
-        deductBudget(budget, pubspecContents.length);
         if (pubspecContents[0]) {
           detectionResult = detectFlutterFramework(pubspecContents[0].content);
         } else {
@@ -461,15 +311,12 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         detectionResult = detectFlutterFramework("");
       }
     } else if (platform === "ios") {
-      // For iOS projects, fetch Swift/ObjC source files to detect SwiftUI vs UIKit
       const iosSourcePatterns = ["**/*.swift", "**/*.m", "**/*.h"];
       const iosEntries = filterFilesByPatterns(
         allFiles,
         iosSourcePatterns,
       ).filter((f) => !isExcludedPath(f.path));
 
-      // Prioritize files likely to contain UI imports so we don't miss
-      // framework signals when slicing to a limited number of files.
       const uiNamePatterns = [
         "View",
         "ViewController",
@@ -485,16 +332,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         return 0;
       });
 
-      // Cap iOS detection files: use at most 10 files from the budget
-      const maxIos = budgetedMaxFiles(budget, Math.min(prioritized.length, 10), "ios-detection");
       const iosFiles = await fetchFileContents(
         owner,
         repo,
         prioritized,
         token,
-        { maxFiles: maxIos },
+        { maxFiles: 10 },
       );
-      deductBudget(budget, iosFiles.length);
       detectionResult = detectiOSFramework(iosFiles, allPaths);
     } else {
       // Web projects (and React Native): find and parse package.json.
@@ -502,15 +346,12 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
       let packageJson: PackageJson = {};
       if (pkgEntry) {
-        const maxPkg = budgetedMaxFiles(budget, 1, "package-json-detection");
         const pkgContents = await fetchFileContents(
           owner,
           repo,
           [pkgEntry],
           token,
-          { maxFiles: maxPkg },
         );
-        deductBudget(budget, pkgContents.length);
 
         if (pkgContents[0]) {
           try {
@@ -536,23 +377,16 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       message: "ファイルを取得中...",
     });
 
-    // Routing files: allocate up to 10 requests from the budget
     const routingEntries = filterFilesByPatterns(allFiles, routingFilePatterns);
-    const maxRouting = budgetedMaxFiles(
-      budget,
-      Math.min(routingEntries.length, 10),
-      "routing-files",
-    );
     const routingFiles = await fetchFileContents(
       owner,
       repo,
       routingEntries,
       token,
-      { maxFiles: maxRouting },
+      { maxFiles: 50 },
     );
-    deductBudget(budget, routingFiles.length);
 
-    // Fetch component files — file extensions depend on the platform
+    // Fetch component files -- file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
     const isIOSProject = isIOSFramework(framework);
     const isFlutterProject = isFlutterFramework(framework);
@@ -600,16 +434,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    // Component files: use whatever budget remains
-    const maxComponents = budgetedMaxFiles(budget, componentEntries.length, "component-files");
     const componentFiles = await fetchFileContents(
       owner,
       repo,
       componentEntries,
       token,
-      { maxFiles: maxComponents },
+      { maxFiles: 50 },
     );
-    deductBudget(budget, componentFiles.length);
 
     // Step 3: Analyze routes (Turn 1)
     await jobStore.sendProgress(jobId, {
@@ -617,7 +448,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       message: "ルートを解析中...",
     });
 
-    const adapter = clientManager.getClient(userId, token);
+    const adapter = clientManager.getClient(params.userId, token);
     const pipeline = new AnalysisPipeline(adapter);
 
     const result = await pipeline.run({
@@ -627,7 +458,6 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       model,
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {
-          // Fire-and-forget: KV write runs in background
           void jobStore.sendProgress(jobId, {
             step: "analyzing_variants",
             message: "バリエーションを解析中...",

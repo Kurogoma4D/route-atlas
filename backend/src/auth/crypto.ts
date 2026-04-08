@@ -1,8 +1,7 @@
 const IV_LENGTH = 12; // 96-bit IV recommended for AES-GCM
 
-function getSessionSecret(sessionSecret?: string): string {
-  const secret =
-    sessionSecret ?? process.env["SESSION_SECRET"];
+function getSessionSecret(): string {
+  const secret = process.env["SESSION_SECRET"];
   if (!secret && process.env["NODE_ENV"] === "production") {
     throw new Error(
       "SESSION_SECRET environment variable must be set in production",
@@ -14,8 +13,8 @@ function getSessionSecret(sessionSecret?: string): string {
 let cachedKey: CryptoKey | null = null;
 let cachedSecret: string | null = null;
 
-async function getEncryptionKey(sessionSecret?: string): Promise<CryptoKey> {
-  const secret = getSessionSecret(sessionSecret);
+async function getEncryptionKey(): Promise<CryptoKey> {
+  const secret = getSessionSecret();
   if (cachedKey && cachedSecret === secret) return cachedKey;
 
   const encoder = new TextEncoder();
@@ -69,11 +68,8 @@ function fromBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-export async function encrypt(
-  plaintext: string,
-  sessionSecret?: string,
-): Promise<string> {
-  const key = await getEncryptionKey(sessionSecret);
+export async function encrypt(plaintext: string): Promise<string> {
+  const key = await getEncryptionKey();
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
   const encoder = new TextEncoder();
 
@@ -94,11 +90,8 @@ export async function encrypt(
   return [toBase64(iv), toBase64(authTag), toBase64(encrypted)].join(":");
 }
 
-export async function decrypt(
-  ciphertext: string,
-  sessionSecret?: string,
-): Promise<string> {
-  const key = await getEncryptionKey(sessionSecret);
+export async function decrypt(ciphertext: string): Promise<string> {
+  const key = await getEncryptionKey();
   const parts = ciphertext.split(":");
   if (parts.length !== 3) {
     throw new Error("Invalid encrypted token format");
