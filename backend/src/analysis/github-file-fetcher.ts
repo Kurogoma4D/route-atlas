@@ -88,13 +88,11 @@ export class GitHubApiError extends Error {
 const GITHUB_API_BASE = "https://api.github.com";
 
 /** Maximum number of retries on rate-limit (HTTP 403 / 429). */
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 1;
 
 /** Base delay (ms) for exponential backoff between retries. */
 const BASE_BACKOFF_MS = 1000;
 
-/** Contents API file size limit (1 MB). Files larger need Blob API. */
-const CONTENTS_API_SIZE_LIMIT = 1_000_000;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -222,7 +220,7 @@ export async function fetchSingleFileContent(
   ref?: string,
 ): Promise<string> {
   const isLargeFile =
-    file.size !== undefined && file.size > CONTENTS_API_SIZE_LIMIT;
+    file.size !== undefined && file.size > 1_000_000;
 
   if (isLargeFile) {
     return fetchViaBlobApi(owner, repo, file.sha, token);
@@ -260,7 +258,7 @@ export async function fetchFileContents(
   repo: string,
   files: TreeEntry[],
   token: string,
-  options?: { ref?: string; maxFiles?: number },
+  options?: { maxFiles?: number },
 ): Promise<FileWithContent[]> {
   const limit =
     options?.maxFiles !== undefined ? options.maxFiles : files.length;

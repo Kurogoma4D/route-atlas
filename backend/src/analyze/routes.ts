@@ -352,17 +352,17 @@ interface PipelineParams {
  *   1  fetchFileTree (Trees API)
  *   ~5 framework detection files (package.json, Gradle, pubspec, iOS samples)
  *  10  routing files
- *  ~30 component files (remaining budget)
- *   ~4 reserved for LLM / other overhead
+ *  ~19 component files (remaining budget)
+ *  ~15 reserved for KV writes (~6-7), retries, decrypt overhead
  */
 const SUBREQUEST_LIMIT = 50;
-const RESERVED_FOR_OVERHEAD = 4; // LLM calls, KV writes, etc.
+const RESERVED_FOR_OVERHEAD = 15; // KV writes (~6-7) + retries + decrypt overhead
 
 /**
  * Mutable budget tracker passed through the pipeline.
  * Each stage deducts from `remaining` before fetching.
  */
-export interface SubrequestBudget {
+interface SubrequestBudget {
   remaining: number;
 }
 
@@ -370,9 +370,19 @@ function createBudget(): SubrequestBudget {
   return { remaining: SUBREQUEST_LIMIT - RESERVED_FOR_OVERHEAD };
 }
 
-function budgetedMaxFiles(budget: SubrequestBudget, desired: number): number {
+function budgetedMaxFiles(
+  budget: SubrequestBudget,
+  desired: number,
+  stageName?: string,
+): number {
   const allowed = Math.max(0, budget.remaining);
-  return Math.min(desired, allowed);
+  const result = Math.min(desired, allowed);
+  if (result === 0 && desired > 0) {
+    console.warn(
+      `[subrequest-budget] Budget exhausted — skipping stage${stageName ? ` "${stageName}"` : ""} (wanted ${desired} files, 0 remaining)`,
+    );
+  }
+  return result;
 }
 
 function deductBudget(budget: SubrequestBudget, count: number): void {
@@ -419,13 +429,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         allFiles,
         gradlePatterns,
       ).filter((f) => !isExcludedPath(f.path));
-      const maxGradle = budgetedMaxFiles(budget, gradleEntries.length);
+      const maxGradle = budgetedMaxFiles(budget, gradleEntries.length, "gradle-detection");
       const gradleFiles = await fetchFileContents(
         owner,
         repo,
         gradleEntries,
         token,
-        { ref: branch, maxFiles: maxGradle },
+        { maxFiles: maxGradle },
       );
       deductBudget(budget, gradleFiles.length);
       detectionResult = detectAndroidFramework(gradleFiles);
@@ -433,13 +443,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       // For Flutter projects, fetch pubspec.yaml to detect the routing library
       const pubspecEntry = allFiles.find((f) => f.path === "pubspec.yaml");
       if (pubspecEntry) {
-        const maxPubspec = budgetedMaxFiles(budget, 1);
+        const maxPubspec = budgetedMaxFiles(budget, 1, "pubspec-detection");
         const pubspecContents = await fetchFileContents(
           owner,
           repo,
           [pubspecEntry],
           token,
-          { ref: branch, maxFiles: maxPubspec },
+          { maxFiles: maxPubspec },
         );
         deductBudget(budget, pubspecContents.length);
         if (pubspecContents[0]) {
@@ -476,16 +486,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       });
 
       // Cap iOS detection files: use at most 10 files from the budget
-      const maxIos = budgetedMaxFiles(budget, Math.min(prioritized.length, 10));
+      const maxIos = budgetedMaxFiles(budget, Math.min(prioritized.length, 10), "ios-detection");
       const iosFiles = await fetchFileContents(
         owner,
         repo,
         prioritized,
         token,
-        {
-          ref: branch,
-          maxFiles: maxIos,
-        },
+        { maxFiles: maxIos },
       );
       deductBudget(budget, iosFiles.length);
       detectionResult = detectiOSFramework(iosFiles, allPaths);
@@ -495,16 +502,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
       let packageJson: PackageJson = {};
       if (pkgEntry) {
-        const maxPkg = budgetedMaxFiles(budget, 1);
+        const maxPkg = budgetedMaxFiles(budget, 1, "package-json-detection");
         const pkgContents = await fetchFileContents(
           owner,
           repo,
           [pkgEntry],
           token,
-          {
-            ref: branch,
-            maxFiles: maxPkg,
-          },
+          { maxFiles: maxPkg },
         );
         deductBudget(budget, pkgContents.length);
 
@@ -537,13 +541,14 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const maxRouting = budgetedMaxFiles(
       budget,
       Math.min(routingEntries.length, 10),
+      "routing-files",
     );
     const routingFiles = await fetchFileContents(
       owner,
       repo,
       routingEntries,
       token,
-      { ref: branch, maxFiles: maxRouting },
+      { maxFiles: maxRouting },
     );
     deductBudget(budget, routingFiles.length);
 
@@ -596,13 +601,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     });
 
     // Component files: use whatever budget remains
-    const maxComponents = budgetedMaxFiles(budget, componentEntries.length);
+    const maxComponents = budgetedMaxFiles(budget, componentEntries.length, "component-files");
     const componentFiles = await fetchFileContents(
       owner,
       repo,
       componentEntries,
       token,
-      { ref: branch, maxFiles: maxComponents },
+      { maxFiles: maxComponents },
     );
     deductBudget(budget, componentFiles.length);
 
