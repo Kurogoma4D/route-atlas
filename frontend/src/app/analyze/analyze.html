@@ -13,25 +13,51 @@
     </mat-card-content>
   </mat-card>
   } @else {
-  <mat-stepper
-    [linear]="true"
-    [selectedIndex]="currentStepIndex()"
-    orientation="vertical"
-  >
+  <div class="steps-list">
     @for (step of steps; track step.key) {
-    <mat-step [completed]="isStepCompleted(step.key)" [editable]="false">
-      <ng-template matStepLabel>
-        <span class="step-label">{{ step.label }}</span>
-      </ng-template>
-      <div class="step-content">
-        @if (isStepActive(step.key)) {
-        <mat-progress-bar mode="indeterminate"></mat-progress-bar>
-        } @else if (isStepCompleted(step.key)) {
-        <mat-icon class="step-done-icon">check_circle</mat-icon>
+    <div
+      class="step-row"
+      [class.step-active]="isStepActive(step.key)"
+      [class.step-completed]="isStepCompleted(step.key)"
+      [class.step-pending]="!isStepActive(step.key) && !isStepCompleted(step.key)"
+    >
+      <div class="step-indicator">
+        @if (isStepCompleted(step.key)) {
+        <mat-icon class="step-done-icon" @stepComplete>check_circle</mat-icon>
+        } @else if (isStepActive(step.key)) {
+        <div class="step-active-dot"></div>
+        } @else {
+        <div class="step-pending-dot"></div>
         }
       </div>
-    </mat-step>
+
+      <div class="step-body">
+        <span class="step-label">{{ step.label }}</span>
+
+        @if (isStepActive(step.key)) {
+        <div class="step-progress">
+          <mat-progress-bar mode="indeterminate"></mat-progress-bar>
+        </div>
+        }
+
+        @if (isStepCompleted(step.key) && step.key === 'detecting_framework' && frameworkLabel()) {
+        <div class="step-metadata" @metadataReveal>
+          <span class="metadata-chip">{{ frameworkLabel() }}</span>
+          @if (platformLabel()) {
+          <span class="metadata-separator">—</span>
+          <span class="metadata-chip">{{ platformLabel() }}</span>
+          }
+        </div>
+        }
+
+        @if (isStepCompleted(step.key) && step.key === 'fetching_files' && fileCountLabel()) {
+        <div class="step-metadata" @metadataReveal>
+          <span class="metadata-text">{{ fileCountLabel() }}</span>
+        </div>
+        }
+      </div>
+    </div>
     }
-  </mat-stepper>
+  </div>
   }
 </div>

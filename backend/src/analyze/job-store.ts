@@ -27,6 +27,7 @@ export interface JobState {
   result?: AnalysisResult;
   error?: string;
   createdAt: number;
+  metadata?: Record<string, string | number>;
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +100,11 @@ export class JobStore {
    */
   async sendProgress(
     jobId: string,
-    event: { step: string; message: string },
+    event: {
+      step: string;
+      message: string;
+      metadata?: Record<string, string | number>;
+    },
   ): Promise<void> {
     const state = await this.getJob(jobId);
     if (!state) {
@@ -110,6 +115,9 @@ export class JobStore {
     state.status = "running";
     state.step = event.step;
     state.message = event.message;
+    if (event.metadata) {
+      state.metadata = { ...state.metadata, ...event.metadata };
+    }
 
     await this.kv.put(`${JOB_KEY_PREFIX}${jobId}`, JSON.stringify(state), {
       expirationTtl: JOB_TTL_SECONDS,
