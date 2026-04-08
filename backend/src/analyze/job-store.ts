@@ -102,7 +102,10 @@ export class JobStore {
     event: { step: string; message: string },
   ): Promise<void> {
     const state = await this.getJob(jobId);
-    if (!state) return;
+    if (!state) {
+      console.warn(`[JobStore] sendProgress: job ${jobId} not found in KV`);
+      return;
+    }
 
     state.status = "running";
     state.step = event.step;
@@ -111,6 +114,7 @@ export class JobStore {
     await this.kv.put(`${JOB_KEY_PREFIX}${jobId}`, JSON.stringify(state), {
       expirationTtl: JOB_TTL_SECONDS,
     });
+    console.log(`[JobStore] sendProgress: ${jobId} → ${event.step}`);
   }
 
   /**
@@ -118,7 +122,10 @@ export class JobStore {
    */
   async sendComplete(jobId: string, result: AnalysisResult): Promise<void> {
     const state = await this.getJob(jobId);
-    if (!state) return;
+    if (!state) {
+      console.warn(`[JobStore] sendComplete: job ${jobId} not found in KV`);
+      return;
+    }
 
     state.status = "complete";
     state.step = "complete";
@@ -129,6 +136,7 @@ export class JobStore {
       expirationTtl: JOB_TTL_SECONDS,
     });
 
+    console.log(`[JobStore] sendComplete: ${jobId} (routes: ${result.routes?.length ?? 0})`);
     // Remove from active jobs
     await this.removeActiveJob(state.userId, jobId);
   }
@@ -138,7 +146,10 @@ export class JobStore {
    */
   async sendError(jobId: string, message: string): Promise<void> {
     const state = await this.getJob(jobId);
-    if (!state) return;
+    if (!state) {
+      console.warn(`[JobStore] sendError: job ${jobId} not found in KV`);
+      return;
+    }
 
     state.status = "error";
     state.step = "error";
@@ -149,6 +160,7 @@ export class JobStore {
       expirationTtl: JOB_TTL_SECONDS,
     });
 
+    console.log(`[JobStore] sendError: ${jobId} → ${message}`);
     // Remove from active jobs
     await this.removeActiveJob(state.userId, jobId);
   }
