@@ -339,6 +339,46 @@ interface PipelineParams {
   sessionSecret?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Subrequest budget tracker
+// ---------------------------------------------------------------------------
+
+/**
+ * Cloudflare Workers limits each invocation to 50 subrequests.
+ * We track how many GitHub API calls we have made and cap file fetches
+ * so that we never exceed the limit.
+ *
+ * Budget allocation (total = 50):
+ *   1  fetchFileTree (Trees API)
+ *   ~5 framework detection files (package.json, Gradle, pubspec, iOS samples)
+ *  10  routing files
+ *  ~30 component files (remaining budget)
+ *   ~4 reserved for LLM / other overhead
+ */
+const SUBREQUEST_LIMIT = 50;
+const RESERVED_FOR_OVERHEAD = 4; // LLM calls, KV writes, etc.
+
+/**
+ * Mutable budget tracker passed through the pipeline.
+ * Each stage deducts from `remaining` before fetching.
+ */
+export interface SubrequestBudget {
+  remaining: number;
+}
+
+function createBudget(): SubrequestBudget {
+  return { remaining: SUBREQUEST_LIMIT - RESERVED_FOR_OVERHEAD };
+}
+
+function budgetedMaxFiles(budget: SubrequestBudget, desired: number): number {
+  const allowed = Math.max(0, budget.remaining);
+  return Math.min(desired, allowed);
+}
+
+function deductBudget(budget: SubrequestBudget, count: number): void {
+  budget.remaining -= count;
+}
+
 async function runPipeline(params: PipelineParams): Promise<void> {
   const {
     jobId,
@@ -355,6 +395,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
   try {
     const token = await decrypt(encryptedToken, sessionSecret);
+    const budget = createBudget();
 
     // Step 1: Detect framework
     await jobStore.sendProgress(jobId, {
@@ -363,6 +404,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     });
 
     const { files: allFiles } = await fetchFileTree(owner, repo, branch, token);
+    deductBudget(budget, 1); // Trees API call
     const allPaths = allFiles.map((f) => f.path);
 
     // Determine platform (web vs android) and detect framework
@@ -377,25 +419,29 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         allFiles,
         gradlePatterns,
       ).filter((f) => !isExcludedPath(f.path));
+      const maxGradle = budgetedMaxFiles(budget, gradleEntries.length);
       const gradleFiles = await fetchFileContents(
         owner,
         repo,
         gradleEntries,
         token,
-        { ref: branch },
+        { ref: branch, maxFiles: maxGradle },
       );
+      deductBudget(budget, gradleFiles.length);
       detectionResult = detectAndroidFramework(gradleFiles);
     } else if (platform === "flutter") {
       // For Flutter projects, fetch pubspec.yaml to detect the routing library
       const pubspecEntry = allFiles.find((f) => f.path === "pubspec.yaml");
       if (pubspecEntry) {
+        const maxPubspec = budgetedMaxFiles(budget, 1);
         const pubspecContents = await fetchFileContents(
           owner,
           repo,
           [pubspecEntry],
           token,
-          { ref: branch },
+          { ref: branch, maxFiles: maxPubspec },
         );
+        deductBudget(budget, pubspecContents.length);
         if (pubspecContents[0]) {
           detectionResult = detectFlutterFramework(pubspecContents[0].content);
         } else {
@@ -413,7 +459,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       ).filter((f) => !isExcludedPath(f.path));
 
       // Prioritize files likely to contain UI imports so we don't miss
-      // framework signals when slicing to 50 files.
+      // framework signals when slicing to a limited number of files.
       const uiNamePatterns = [
         "View",
         "ViewController",
@@ -429,10 +475,19 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         return 0;
       });
 
-      const iosSliced = prioritized.slice(0, 50);
-      const iosFiles = await fetchFileContents(owner, repo, iosSliced, token, {
-        ref: branch,
-      });
+      // Cap iOS detection files: use at most 10 files from the budget
+      const maxIos = budgetedMaxFiles(budget, Math.min(prioritized.length, 10));
+      const iosFiles = await fetchFileContents(
+        owner,
+        repo,
+        prioritized,
+        token,
+        {
+          ref: branch,
+          maxFiles: maxIos,
+        },
+      );
+      deductBudget(budget, iosFiles.length);
       detectionResult = detectiOSFramework(iosFiles, allPaths);
     } else {
       // Web projects (and React Native): find and parse package.json.
@@ -440,6 +495,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
       let packageJson: PackageJson = {};
       if (pkgEntry) {
+        const maxPkg = budgetedMaxFiles(budget, 1);
         const pkgContents = await fetchFileContents(
           owner,
           repo,
@@ -447,8 +503,10 @@ async function runPipeline(params: PipelineParams): Promise<void> {
           token,
           {
             ref: branch,
+            maxFiles: maxPkg,
           },
         );
+        deductBudget(budget, pkgContents.length);
 
         if (pkgContents[0]) {
           try {
@@ -474,14 +532,20 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       message: "ファイルを取得中...",
     });
 
+    // Routing files: allocate up to 10 requests from the budget
     const routingEntries = filterFilesByPatterns(allFiles, routingFilePatterns);
+    const maxRouting = budgetedMaxFiles(
+      budget,
+      Math.min(routingEntries.length, 10),
+    );
     const routingFiles = await fetchFileContents(
       owner,
       repo,
       routingEntries,
       token,
-      { ref: branch },
+      { ref: branch, maxFiles: maxRouting },
     );
+    deductBudget(budget, routingFiles.length);
 
     // Fetch component files — file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
@@ -530,13 +594,17 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       }
       return true;
     });
+
+    // Component files: use whatever budget remains
+    const maxComponents = budgetedMaxFiles(budget, componentEntries.length);
     const componentFiles = await fetchFileContents(
       owner,
       repo,
       componentEntries,
       token,
-      { ref: branch },
+      { ref: branch, maxFiles: maxComponents },
     );
+    deductBudget(budget, componentFiles.length);
 
     // Step 3: Analyze routes (Turn 1)
     await jobStore.sendProgress(jobId, {

@@ -246,28 +246,30 @@ export async function fetchSingleFileContent(
 }
 
 /**
- * Fetch file contents for multiple files.
+ * Fetch file contents for multiple files using the Git Blobs API.
  *
- * Files exceeding the Contents API size limit are automatically fetched
- * via the Blob API.
+ * Each file requires exactly one API call via `GET /repos/{owner}/{repo}/git/blobs/{sha}`.
+ * Since the tree entries already contain the blob SHA, this avoids the Contents API
+ * entirely and reduces the chance of needing fallback requests.
+ *
+ * When `maxFiles` is specified, only the first `maxFiles` entries are fetched.
+ * Callers should pre-sort / prioritize the `files` array before passing it in.
  */
 export async function fetchFileContents(
   owner: string,
   repo: string,
   files: TreeEntry[],
   token: string,
-  options?: { ref?: string },
+  options?: { ref?: string; maxFiles?: number },
 ): Promise<FileWithContent[]> {
+  const limit =
+    options?.maxFiles !== undefined ? options.maxFiles : files.length;
+  const toFetch = files.slice(0, limit);
+
   const results: FileWithContent[] = [];
 
-  for (const file of files) {
-    const content = await fetchSingleFileContent(
-      owner,
-      repo,
-      file,
-      token,
-      options?.ref,
-    );
+  for (const file of toFetch) {
+    const content = await fetchViaBlobApi(owner, repo, file.sha, token);
     results.push({ path: file.path, content });
   }
 
