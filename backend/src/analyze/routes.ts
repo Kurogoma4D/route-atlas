@@ -228,6 +228,7 @@ export function createAnalyzeRouter(deps: AnalyzeRouterDeps): Hono {
       step: job.step,
       message: job.message,
       ...(job.error ? { error: job.error } : {}),
+      ...(job.metadata ? { metadata: job.metadata } : {}),
     });
   });
 
@@ -371,6 +372,17 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
     const { framework, routingFilePatterns } = detectionResult;
 
+    // Send detected framework metadata
+    await jobStore.sendProgress(jobId, {
+      step: "detecting_framework",
+      message: "フレームワークを検出しました",
+      metadata: {
+        framework,
+        platform,
+        totalFiles: allFiles.length,
+      },
+    });
+
     // Step 2: Fetch files
     await jobStore.sendProgress(jobId, {
       step: "fetching_files",
@@ -441,6 +453,16 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       token,
       { maxFiles: 50 },
     );
+
+    // Send file count metadata
+    await jobStore.sendProgress(jobId, {
+      step: "fetching_files",
+      message: "ファイルを取得しました",
+      metadata: {
+        routingFileCount: routingFiles.length,
+        componentFileCount: componentFiles.length,
+      },
+    });
 
     // Step 3: Analyze routes (Turn 1)
     await jobStore.sendProgress(jobId, {

@@ -21,9 +21,18 @@ export type AnalysisStep =
   | "analyzing_variants"
   | "analyzing_transitions";
 
+export interface StepMetadata {
+  framework?: string;
+  platform?: string;
+  totalFiles?: number;
+  routingFileCount?: number;
+  componentFileCount?: number;
+}
+
 export interface ProgressEvent {
   step: AnalysisStep;
   message: string;
+  metadata?: StepMetadata;
 }
 
 export interface StartAnalysisRequest {
@@ -45,6 +54,7 @@ export interface JobPollResponse {
   step: string;
   message: string;
   error?: string;
+  metadata?: StepMetadata;
 }
 
 export type AnalysisEvent =
@@ -135,6 +145,7 @@ export class AnalyzeService {
           data: {
             step: response.step as AnalysisStep,
             message: response.message,
+            metadata: response.metadata,
           },
         });
       }),

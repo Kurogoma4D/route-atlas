@@ -12,6 +12,10 @@ h2 {
   color: var(--ra-text);
 }
 
+// ---------------------------------------------------------------------------
+// Error card
+// ---------------------------------------------------------------------------
+
 .error-card {
   margin-top: 16px;
 }
@@ -37,15 +41,154 @@ h2 {
   font-size: 14px;
 }
 
-.step-label {
-  font-size: 13px;
+// ---------------------------------------------------------------------------
+// Custom step list
+// ---------------------------------------------------------------------------
+
+.steps-list {
+  display: flex;
+  flex-direction: column;
 }
 
-.step-content {
-  padding: 8px 0;
-  min-height: 24px;
+.step-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 0;
+  position: relative;
+
+  // Vertical connecting line
+  &:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 11px; // center of 24px indicator
+    top: 38px;
+    bottom: -14px;
+    width: 2px;
+    background: var(--ra-border);
+    transition: background 400ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  &.step-completed:not(:last-child)::after {
+    background: var(--ra-accent);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Step indicator (left column)
+// ---------------------------------------------------------------------------
+
+.step-indicator {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .step-done-icon {
   color: var(--ra-accent);
+  font-size: 24px;
+  width: 24px;
+  height: 24px;
+}
+
+.step-active-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--ra-accent);
+  position: relative;
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 50%;
+    border: 2px solid var(--ra-accent);
+    animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+}
+
+@keyframes pulse-ring {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.15);
+  }
+}
+
+.step-pending-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 2px solid var(--ra-border);
+  background: transparent;
+}
+
+// ---------------------------------------------------------------------------
+// Step body (right column)
+// ---------------------------------------------------------------------------
+
+.step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.step-label {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 24px; // align with indicator
+  color: var(--ra-text);
+
+  .step-pending & {
+    color: var(--ra-text-tertiary);
+  }
+}
+
+.step-progress {
+  margin-top: 8px;
+
+  mat-progress-bar {
+    border-radius: var(--ra-radius-sm);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Metadata display
+// ---------------------------------------------------------------------------
+
+.step-metadata {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.metadata-chip {
+  display: inline-block;
+  font-family: var(--ra-font-mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  background: var(--ra-accent-soft);
+  color: var(--ra-accent);
+  border-radius: var(--ra-radius-sm);
+  font-weight: 500;
+}
+
+.metadata-separator {
+  color: var(--ra-text-tertiary);
+  font-size: 11px;
+}
+
+.metadata-text {
+  font-size: 12px;
+  color: var(--ra-text-secondary);
+  font-family: var(--ra-font-mono);
 }
