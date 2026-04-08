@@ -37,9 +37,6 @@ COPY --from=builder /app/pruned/node_modules ./node_modules
 COPY --from=builder /app/backend/dist ./dist
 COPY --from=builder /app/backend/package.json ./package.json
 
-# Copy shared build output (needed at runtime for type re-exports)
-COPY --from=builder /app/shared/dist ./shared-dist
-
 ENV NODE_ENV=production
 ENV PORT=8080
 

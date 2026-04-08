@@ -30,12 +30,29 @@ export const onRequest: PagesFunction<Env> = async (context) => {
     headers,
     body: context.request.body,
     redirect: "manual",
-  });
+    // Required by Cloudflare Workers when forwarding a ReadableStream body
+    duplex: "half",
+  } as RequestInit);
 
-  // Return the response as-is (including Set-Cookie headers)
+  // Rewrite Set-Cookie headers to strip any explicit domain attribute so the
+  // cookie defaults to the requesting origin (Pages domain) instead of the
+  // Cloud Run backend hostname, which the browser would reject.
+  const responseHeaders = new Headers(response.headers);
+  // Cloudflare Workers Headers expose getAll() for set-cookie
+  const cookies = (
+    response.headers as unknown as { getAll(name: string): string[] }
+  ).getAll("set-cookie");
+  if (cookies.length > 0) {
+    responseHeaders.delete("set-cookie");
+    for (const cookie of cookies) {
+      const rewritten = cookie.replace(/;\s*domain=[^;]*/gi, "");
+      responseHeaders.append("set-cookie", rewritten);
+    }
+  }
+
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
-    headers: response.headers,
+    headers: responseHeaders,
   });
 };

@@ -290,6 +290,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
         repo,
         gradleEntries,
         token,
+        { maxFiles: 50 },
       );
       detectionResult = detectAndroidFramework(gradleFiles);
     } else if (platform === "flutter") {
@@ -382,6 +383,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       repo,
       routingEntries,
       token,
+      { maxFiles: 50 },
     );
 
     // Fetch component files -- file extensions depend on the platform
@@ -437,6 +439,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       repo,
       componentEntries,
       token,
+      { maxFiles: 50 },
     );
 
     // Step 3: Analyze routes (Turn 1)
