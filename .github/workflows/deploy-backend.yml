@@ -56,7 +56,5 @@ jobs:
             --max-instances 4 \
             --timeout 600 \
             --set-env-vars "NODE_ENV=production" \
-            --set-secrets "GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest,GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest,SESSION_SECRET=SESSION_SECRET:latest" \
-            --set-env-vars "OAUTH_CALLBACK_URL=${{ secrets.OAUTH_CALLBACK_URL }}" \
-            --set-env-vars "ALLOWED_ORIGINS=${{ secrets.ALLOWED_ORIGINS }}" \
+            --set-secrets "GITHUB_CLIENT_ID=GITHUB_CLIENT_ID:latest,GITHUB_CLIENT_SECRET=GITHUB_CLIENT_SECRET:latest,SESSION_SECRET=SESSION_SECRET:latest,OAUTH_CALLBACK_URL=OAUTH_CALLBACK_URL:latest,ALLOWED_ORIGINS=ALLOWED_ORIGINS:latest" \
             --quiet
