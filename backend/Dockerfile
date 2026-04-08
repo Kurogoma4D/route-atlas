@@ -1,6 +1,6 @@
 # Multi-stage build for route-atlas backend on Cloud Run
 # Stage 1: install dependencies and build
-FROM node:20-slim AS builder
+FROM node:22-slim AS builder
 
 RUN corepack enable && corepack prepare pnpm@10.33.0 --activate
 
@@ -28,7 +28,7 @@ RUN pnpm --filter @route-atlas/backend build
 RUN pnpm --filter @route-atlas/backend --prod deploy --legacy /app/pruned
 
 # Stage 2: production image
-FROM node:20-slim AS runner
+FROM node:22-slim AS runner
 
 WORKDIR /app
 
