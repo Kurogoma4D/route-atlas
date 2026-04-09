@@ -10,14 +10,25 @@ GitHub リポジトリの Web フロントエンドコードを解析し、画�
 
 ## 技術スタック
 
-| レイヤー       | 技術                                                  |
-| -------------- | ----------------------------------------------------- |
-| フロントエンド | Angular 19+ (standalone components), Angular Material |
-| グラフ描画     | Cytoscape.js                                          |
-| バックエンド   | Hono (Cloudflare Workers)                             |
-| LLM 解析       | GitHub Copilot SDK (`@github/copilot-sdk`)            |
-| 認証           | GitHub OAuth App                                      |
-| デプロイ       | Cloudflare Pages (frontend) + Workers (backend)       |
+| レイヤー       | 技術                                                        |
+| -------------- | ----------------------------------------------------------- |
+| フロントエンド | Angular 19+ (standalone components), Angular Material       |
+| グラフ描画     | Cytoscape.js                                                |
+| バックエンド   | Hono + Node.js 22 (GCP Cloud Run)                           |
+| LLM 解析       | GitHub Copilot SDK (`@github/copilot-sdk`)                  |
+| 認証           | GitHub OAuth App                                            |
+| パッケージ管理 | pnpm workspaces (monorepo)                                  |
+
+## プロジェクト構成
+
+```
+route-atlas/
+├── frontend/    # Angular SPA
+├── backend/     # Hono API サーバー (Node.js)
+├── shared/      # 共有 TypeScript 型定義
+├── functions/   # Cloudflare Pages Functions (API プロキシ)
+└── .claude/     # Claude Code エージェント・スキル
+```
 
 ## セットアップ
 
@@ -25,28 +36,22 @@ GitHub リポジトリの Web フロントエンドコードを解析し、画�
 # 依存関係のインストール
 pnpm install
 
-# 開発サーバーの起動
+# 開発サーバーの起動 (frontend + backend 同時起動)
 pnpm dev
 
 # ビルド
 pnpm build
+
+# テスト
+pnpm test
+
+# Lint
+pnpm lint
 ```
 
-## デプロイ
+### 環境変数
 
-本プロジェクトは Cloudflare にデプロイされます。GitHub Actions による自動デプロイが設定されており、`main` ブランチへの push 時に自動でデプロイされます。
-
-- **フロントエンド**: Cloudflare Pages (`deploy-frontend.yml`)
-- **バックエンド**: Cloudflare Workers (`deploy-backend.yml`)
-
-### 必要な GitHub Secrets
-
-| シークレット名          | 説明                                                 |
-| ----------------------- | ---------------------------------------------------- |
-| `CLOUDFLARE_API_TOKEN`  | Cloudflare API トークン (Pages/Workers デプロイ権限) |
-| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare アカウント ID                             |
-
-### Cloudflare 側の環境変数 (Workers)
+`.env.example` を `.env` にコピーし、必要な値を設定してください。
 
 | 変数名                 | 説明                                        |
 | ---------------------- | ------------------------------------------- |
@@ -54,8 +59,9 @@ pnpm build
 | `GITHUB_CLIENT_SECRET` | GitHub OAuth App のクライアントシークレット |
 | `SESSION_SECRET`       | セッション暗号化キー (強力なランダム文字列) |
 | `OAUTH_CALLBACK_URL`   | OAuth コールバック URL                      |
-
-これらは `wrangler secret put <変数名>` コマンドまたは Cloudflare ダッシュボードから設定してください。
+| `FRONTEND_ORIGIN`      | フロントエンドのオリジン URL                |
+| `ALLOWED_ORIGINS`      | CORS 許可オリジン                           |
+| `PORT`                 | バックエンドのポート番号 (デフォルト: 3000) |
 
 ## Claude Code エージェント
 
