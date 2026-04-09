@@ -344,6 +344,177 @@ ${componentSource}
 }
 
 // ---------------------------------------------------------------------------
+// Snippet extraction for Turn 3 token reduction
+// ---------------------------------------------------------------------------
+
+/**
+ * Return regex patterns that match navigation-related code for the given framework.
+ * These are derived from the Turn 3 `lookForItems` lists.
+ */
+export function getNavigationPatterns(framework: FrameworkName): RegExp[] {
+  if (isReactNativeFramework(framework)) {
+    return [
+      /navigation\.(navigate|push|goBack|popToTop|replace|reset|dispatch)/,
+      /router\.(push|replace)/,
+      /\bLink\b/,
+      /CommonActions\.navigate/,
+      /StackActions\.(push|pop)/,
+    ];
+  }
+  if (isFlutterFramework(framework)) {
+    return [
+      /Navigator\.(push|pushNamed|pushReplacement|pop|popUntil|popAndPushNamed|of)/,
+      /context\.(go|push|goNamed|pushNamed)/,
+      /GoRouter\.of/,
+      /context\.router\.(push|pushRoute|pop)/,
+      /show(Dialog|ModalBottomSheet|CupertinoDialog|CupertinoModalPopup|GeneralDialog|BottomSheet)/,
+    ];
+  }
+  if (isAndroidFramework(framework)) {
+    return [
+      /NavController\.navigate|findNavController\(\)\.navigate/,
+      /navController\.navigate/,
+      /startActivity|startActivityForResult/,
+      /FragmentTransaction\.(replace|add|show)/,
+      /popBackStack|navigateUp/,
+      /app:destination/,
+    ];
+  }
+  if (isIOSFramework(framework)) {
+    return [
+      /NavigationLink/,
+      /\.navigationDestination/,
+      /\.(sheet|fullScreenCover|popover)\(/,
+      /pushViewController|\.present\(/,
+      /performSegue/,
+      /coordinator\.(navigate|push)/i,
+      /TabView/,
+      /dismiss\(\)|popViewController/,
+    ];
+  }
+  if (isAstroFramework(framework)) {
+    return [
+      /\bhref\s*=\s*["']/,
+      /Astro\.redirect/,
+      /window\.location|location\.href/,
+      /ViewTransitions/,
+      /data-astro-reload/,
+    ];
+  }
+  if (isEmberFramework(framework)) {
+    return [
+      /LinkTo|link-to/,
+      /transitionTo|replaceWith/,
+      /this\.router\.(transitionTo|replaceWith)/,
+      /\bhref\s*=\s*["']/,
+    ];
+  }
+  // Web common (Next.js, React Router, Vue Router, SvelteKit, etc.)
+  return [
+    /\bLink\b/,
+    /router\.(push|navigate|replace)/,
+    /\bnavigate\s*\(/,
+    /\bredirect\s*\(/,
+    /useNavigate/,
+    /window\.location|location\.href/,
+    /\bhref\s*=\s*["']/,
+    /form\s+action\s*=/i,
+  ];
+}
+
+/**
+ * Extract only the lines relevant to navigation from a file's content.
+ *
+ * Returns the import block (top lines starting with `import` / `require` / `from`)
+ * plus lines matching any of the given patterns with surrounding context.
+ * Overlapping ranges are merged. Gaps between ranges are shown as `// ...`.
+ *
+ * Returns `null` if no navigation-related lines are found (imports alone are not enough).
+ */
+export function extractRelevantSnippets(
+  content: string,
+  patterns: RegExp[],
+  contextLines = 5,
+): string | null {
+  const lines = content.split("\n");
+
+  // Collect matched line indices
+  const matchedIndices = new Set<number>();
+  for (let i = 0; i < lines.length; i++) {
+    if (patterns.some((p) => p.test(lines[i]))) {
+      matchedIndices.add(i);
+    }
+  }
+
+  if (matchedIndices.size === 0) return null;
+
+  // Build ranges with context, then merge overlapping ones
+  const ranges: [number, number][] = [];
+  for (const idx of matchedIndices) {
+    const start = Math.max(0, idx - contextLines);
+    const end = Math.min(lines.length - 1, idx + contextLines);
+    ranges.push([start, end]);
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+
+  const merged: [number, number][] = [ranges[0]];
+  for (let i = 1; i < ranges.length; i++) {
+    const prev = merged[merged.length - 1];
+    if (ranges[i][0] <= prev[1] + 1) {
+      prev[1] = Math.max(prev[1], ranges[i][1]);
+    } else {
+      merged.push(ranges[i]);
+    }
+  }
+
+  // Always include the import block at the top
+  let importEnd = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (
+      trimmed.startsWith("import ") ||
+      trimmed.startsWith("import(") ||
+      trimmed.startsWith("from ") ||
+      trimmed.startsWith("require(") ||
+      trimmed.startsWith("const ") ||
+      trimmed.startsWith("//") ||
+      trimmed.startsWith("/*") ||
+      trimmed.startsWith("*") ||
+      trimmed.startsWith("*/") ||
+      trimmed === ""
+    ) {
+      importEnd = i;
+    } else {
+      break;
+    }
+  }
+
+  // If the first merged range already covers imports, skip separate import block
+  const includeImports = importEnd >= 0 && merged[0][0] > importEnd + 1;
+
+  const parts: string[] = [];
+  if (includeImports) {
+    parts.push(lines.slice(0, importEnd + 1).join("\n"));
+    parts.push("// ...");
+  }
+
+  for (let i = 0; i < merged.length; i++) {
+    const [start, end] = merged[i];
+    if (i === 0 && !includeImports && start > 0) {
+      parts.push("// ...");
+    }
+    parts.push(lines.slice(start, end + 1).join("\n"));
+    if (i < merged.length - 1) {
+      parts.push("// ...");
+    } else if (end < lines.length - 1) {
+      parts.push("// ...");
+    }
+  }
+
+  return parts.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Turn 3 — Transition extraction
 // ---------------------------------------------------------------------------
 
@@ -354,7 +525,17 @@ export function buildTurn3Prompt(
 ): string {
   const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
 
-  const filesSection = allComponentSources
+  // Extract only navigation-relevant snippets to reduce token usage
+  const navPatterns = getNavigationPatterns(framework);
+  const snippetFiles: { path: string; content: string }[] = [];
+  for (const f of allComponentSources) {
+    const snippet = extractRelevantSnippets(f.content, navPatterns);
+    if (snippet !== null) {
+      snippetFiles.push({ path: f.path, content: snippet });
+    }
+  }
+
+  const filesSection = snippetFiles
     .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n");
 
@@ -480,7 +661,7 @@ export function buildTurn3Prompt(
                       ? `"LinkTo", "transitionTo", "replaceWith", "router.transitionTo"`
                       : `"Link", "router.push", "window.location"`;
 
-  return `Analyze the following component source files and extract all screen-to-screen transitions (navigations).
+  return `Analyze the following component source code excerpts (showing only navigation-related sections) and extract all screen-to-screen transitions (navigations).
 
 Known screens:
 ${screenList}
