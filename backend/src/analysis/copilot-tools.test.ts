@@ -4,6 +4,7 @@ import {
   createReadFileTool,
   createSearchFilesTool,
   createGrepFilesTool,
+  globToPathQualifier,
   type RepoContext,
 } from "./copilot-tools.js";
 import type { TreeEntry } from "./github-file-fetcher.js";
@@ -293,7 +294,30 @@ describe("grepFiles tool", () => {
     expect(url).toContain(encodeURIComponent("useNavigate"));
   });
 
-  it("applies the optional glob post-filter", async () => {
+  it("pushes a simple glob into the search URL as a `path:` qualifier", async () => {
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce(
+      mockResponse({
+        total_count: 1,
+        items: [{ path: "src/app/page.tsx" }],
+      }),
+    );
+
+    const tool = createGrepFilesTool(ctx());
+    const output = await invoke(tool, { query: "foo", glob: "src/app/**" });
+
+    expect(output).toContain("src/app/page.tsx");
+
+    const mockFetch = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const url = mockFetch.mock.calls[0][0] as string;
+    // `path:src/app` must be pushed down so the filter runs before the cap.
+    expect(url).toContain(encodeURIComponent("path:src/app"));
+    // Per-page cap stays at 30 when the glob was pushed down successfully.
+    expect(url).toContain("per_page=30");
+  });
+
+  it("falls back to a client-side post-filter for complex globs and raises per-page to 100", async () => {
     (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce(
@@ -304,10 +328,54 @@ describe("grepFiles tool", () => {
     );
 
     const tool = createGrepFilesTool(ctx());
-    const output = await invoke(tool, { query: "foo", glob: "src/app/**" });
+    // `**/*.tsx` cannot be pushed down — globstar at head.
+    const output = await invoke(tool, { query: "foo", glob: "**/*.tsx" });
 
+    // Only the .tsx hit should survive the post-filter.
     expect(output).toContain("src/app/page.tsx");
     expect(output).not.toContain("src/lib/router.ts");
+
+    const mockFetch = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const url = mockFetch.mock.calls[0][0] as string;
+    // No `path:` qualifier pushed down.
+    expect(url).not.toContain(encodeURIComponent("path:"));
+    // Per-page bumped to 100 so glob-matching hits past position 30 aren't lost.
+    expect(url).toContain("per_page=100");
+  });
+
+  it("mentions the post-filter limit in the header when total_count exceeds hits for a complex glob", async () => {
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce(
+      mockResponse({
+        // Simulate a "more results than the page" case so the header surfaces.
+        total_count: 250,
+        items: [{ path: "src/app/page.tsx" }],
+      }),
+    );
+
+    const tool = createGrepFilesTool(ctx());
+    const output = await invoke(tool, { query: "foo", glob: "**/*.tsx" });
+
+    expect(output).toContain("post-filter");
+    expect(output).toContain("100");
+  });
+
+  it("prefixes the result with a default-branch disclosure when ctx.ref is set", async () => {
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce(
+      mockResponse({
+        total_count: 1,
+        items: [{ path: "src/app/page.tsx" }],
+      }),
+    );
+
+    const tool = createGrepFilesTool(ctx({ ref: "feature/x" }));
+    const output = await invoke(tool, { query: "useNavigate" });
+
+    expect(output.split("\n")[0]).toMatch(/default branch/i);
+    expect(output).toContain("src/app/page.tsx");
   });
 
   it("returns a 'no matches' message when search returns zero hits", async () => {
@@ -355,5 +423,83 @@ describe("grepFiles tool", () => {
     const output = await invoke(tool, { query: "foo", glob: 42 });
     expect(output).toMatch(/^Error:/);
     expect(output).toContain("glob");
+  });
+
+  // -----------------------------------------------------------------------
+  // Prompt-injection hardening — grepFiles must reject any attempt to widen
+  // the search scope (qualifiers, booleans, grouping).
+  // -----------------------------------------------------------------------
+  describe("rejects prompt-injected queries that try to escape the repo scope", () => {
+    const attackerInputs: Array<{ label: string; query: string }> = [
+      { label: "adds another repo: qualifier", query: "useNavigate repo:evil/leak" },
+      { label: "switches to user:", query: "token user:victim" },
+      { label: "switches to org:", query: "secret org:anthropic" },
+      { label: "uses path: to widen", query: "secret path:.env" },
+      { label: "uses language:", query: "AKIA language:python" },
+      { label: "uses extension:", query: "PRIVATE_KEY extension:pem" },
+      { label: "uses filename:", query: "ignore filename:.env" },
+      { label: "uses in:file", query: "secret in:file" },
+      { label: "uses fork:", query: "secret fork:true" },
+      { label: "stars: numeric qualifier", query: "useNavigate stars:>100" },
+      { label: "OR boolean", query: "useNavigate OR router" },
+      { label: "AND boolean", query: "foo AND bar" },
+      { label: "parenthesised group", query: "(useNavigate)" },
+      { label: "trailing OR group", query: "useNavigate OR (repo:evil/other)" },
+    ];
+
+    for (const { label, query } of attackerInputs) {
+      it(label, async () => {
+        const tool = createGrepFilesTool(ctx());
+        const output = await invoke(tool, { query });
+        expect(output).toMatch(/^Error:/);
+        // The offending query must never reach GitHub.
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      });
+    }
+  });
+
+  // -----------------------------------------------------------------------
+  // globToPathQualifier — unit coverage for the pushdown translator.
+  // -----------------------------------------------------------------------
+  describe("globToPathQualifier", () => {
+    it("maps a trailing globstar to the directory prefix", () => {
+      expect(globToPathQualifier("src/app/**")).toBe("src/app");
+    });
+
+    it("maps a mid-path globstar to the prefix before it", () => {
+      expect(globToPathQualifier("src/app/**/*.tsx")).toBe("src/app");
+    });
+
+    it("strips a trailing wildcard segment", () => {
+      expect(globToPathQualifier("src/app/*.tsx")).toBe("src/app");
+    });
+
+    it("returns the directory for a plain file glob", () => {
+      expect(globToPathQualifier("src/lib/*.ts")).toBe("src/lib");
+    });
+
+    it("returns null for a leading-globstar glob", () => {
+      expect(globToPathQualifier("**/routes.ts")).toBeNull();
+    });
+
+    it("returns null for brace expansion", () => {
+      expect(globToPathQualifier("src/app/*.{ts,tsx}")).toBeNull();
+    });
+
+    it("returns null for negation", () => {
+      expect(globToPathQualifier("!node_modules/**")).toBeNull();
+    });
+
+    it("returns null for character classes", () => {
+      expect(globToPathQualifier("src/[ab]/*.ts")).toBeNull();
+    });
+
+    it("returns null when the glob is just a wildcard", () => {
+      expect(globToPathQualifier("*.ts")).toBeNull();
+    });
+
+    it("returns null for an empty string", () => {
+      expect(globToPathQualifier("")).toBeNull();
+    });
   });
 });

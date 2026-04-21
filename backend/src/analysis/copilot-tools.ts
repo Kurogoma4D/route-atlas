@@ -52,8 +52,32 @@ const MAX_READ_FILE_CHARS = 60_000;
 /** Max paths returned by searchFiles. */
 const MAX_SEARCH_FILES_RESULTS = 200;
 
-/** Max hits returned by grepFiles. */
-const MAX_GREP_RESULTS = 30;
+/** Max hits returned by grepFiles (default — when the glob must be post-filtered). */
+const MAX_GREP_RESULTS_DEFAULT = 30;
+
+/**
+ * Max hits per page when the glob has to be post-filtered client-side
+ * (i.e. could not be pushed down to GitHub's `path:` qualifier). Bumped to
+ * GitHub's per-page cap so fewer matches are lost behind the API ceiling.
+ */
+const MAX_GREP_RESULTS_WITH_POSTFILTER = 100;
+
+/**
+ * Patterns in a raw `grepFiles` query that would widen/redirect the search
+ * beyond the scoped repository. We reject these outright instead of trying
+ * to sanitise — a prompt-injected model should not be able to add qualifiers
+ * like `repo:`, `org:`, `user:`, `fork:`, `in:`, `path:`, etc. or boolean
+ * operators / grouping that would let it escape the server-supplied
+ * `repo:<owner>/<repo>` scope.
+ */
+const DISALLOWED_QUALIFIER_RE =
+  /\b(repo|org|user|fork|in|path|language|extension|filename|size|created|pushed|stars|topic|topics|archived|mirror|is):/i;
+
+/**
+ * Stand-alone boolean / grouping tokens. Parentheses and bare `OR` / `AND` /
+ * `NOT` can combine qualifiers and widen the result set — reject them.
+ */
+const DISALLOWED_BOOLEAN_RE = /(^|\s)(AND|OR|NOT)(\s|$)|[()]/;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -222,6 +246,21 @@ function parseGrepFilesArgs(
       error: "Error: `query` is required and must be a non-empty string.",
     };
   }
+  const query = record.query;
+  if (DISALLOWED_QUALIFIER_RE.test(query)) {
+    return {
+      ok: false,
+      error:
+        "Error: `query` must not contain GitHub search qualifiers like `repo:`, `org:`, `user:`, `path:`, `language:`, etc. — the server scopes the search automatically.",
+    };
+  }
+  if (DISALLOWED_BOOLEAN_RE.test(query)) {
+    return {
+      ok: false,
+      error:
+        "Error: `query` must not contain boolean operators (`AND`, `OR`, `NOT`) or parentheses — pass a plain keyword instead.",
+    };
+  }
   const globValue = record.glob;
   if (globValue !== undefined && !isNonEmptyString(globValue)) {
     return {
@@ -230,6 +269,59 @@ function parseGrepFilesArgs(
     };
   }
   return { ok: true, query: record.query, glob: globValue };
+}
+
+/**
+ * Try to translate a minimatch-style glob into a GitHub Search `path:`
+ * qualifier so the filter is applied **before** the per-page API cap.
+ *
+ * GitHub's `path:` qualifier only understands a restricted subset of glob
+ * syntax: directory prefixes, single-segment `*`, and trailing file-type
+ * markers. If the glob uses features that do not map cleanly (globstars
+ * spanning multiple directories, brace expansion, negation, or character
+ * classes) we return `null` and fall back to a client-side post-filter.
+ */
+export function globToPathQualifier(glob: string): string | null {
+  if (!glob) return null;
+  // Reject features that GitHub's `path:` cannot represent faithfully.
+  if (/[{}![\]]/.test(glob)) return null;
+
+  // Trim a single leading `./` — harmless but noisy.
+  const g = glob.replace(/^\.\//, "");
+
+  // Single-segment cases we can map directly.
+  //   src/app/**        -> src/app
+  //   src/app/**/*.tsx  -> src/app (we lose the extension filter, which is
+  //                        still safe: fewer false negatives than the cap).
+  //   **/routes.ts      -> cannot be pushed down (globstar at head).
+  //   src/*.ts          -> src (single-segment star; path: is a prefix match,
+  //                        so this is a safe over-approximation).
+  if (g.startsWith("**/")) return null;
+
+  // If there's a globstar mid-path, take the prefix up to the globstar and
+  // push *that* down — post-filter still runs to tighten the result set.
+  const globstarIdx = g.indexOf("/**");
+  if (globstarIdx !== -1) {
+    const prefix = g.slice(0, globstarIdx);
+    if (prefix.length === 0 || prefix.includes("*")) return null;
+    return prefix;
+  }
+
+  // No globstar: strip any trailing filename/pattern segment that contains
+  // wildcards, leaving a plain directory prefix.
+  const segments = g.split("/");
+  while (segments.length > 0) {
+    const tail = segments[segments.length - 1];
+    if (tail.includes("*") || tail.includes("?")) {
+      segments.pop();
+      continue;
+    }
+    break;
+  }
+  if (segments.length === 0) return null;
+  const prefix = segments.join("/");
+  if (prefix.includes("*") || prefix.includes("?")) return null;
+  return prefix;
 }
 
 /** Shape of a hit in GitHub's code search response. */
@@ -247,18 +339,19 @@ export function createGrepFilesTool(ctx: RepoContext): Tool<unknown> {
   return {
     name: "grepFiles",
     description:
-      "Search repository source for a text/code query using GitHub's code search API. Returns matching file paths (one per line). Optionally pass a `glob` to pre-filter results client-side. Use this when you know a keyword (e.g. `useNavigate`, `router.push`) but not which files contain it.",
+      "Search repository source for a text/code query using GitHub's code search API. Returns matching file paths (one per line). Optionally pass a `glob` to narrow results (pushed into the search when expressible, otherwise applied as a post-filter). Use this when you know a keyword (e.g. `useNavigate`, `router.push`) but not which files contain it. Note: matches are from the repository's default branch and may not reflect changes on the analyzed ref. Combine with `readFile` (ref-aware) to verify. The `query` must be a plain keyword — GitHub search qualifiers (`repo:`, `org:`, `path:`, etc.) and boolean operators (`AND`/`OR`/`NOT`/parentheses) are rejected.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
           description:
-            "Query passed to GitHub code search, scoped to this repo. Keep it short; do not include `repo:` qualifiers.",
+            "Plain keyword(s) passed to GitHub code search, scoped to this repo. Do not include qualifiers such as `repo:`, `org:`, `path:`, `language:` — they are rejected. Boolean operators and parentheses are also rejected.",
         },
         glob: {
           type: "string",
-          description: "Optional glob used to post-filter the results.",
+          description:
+            "Optional glob used to narrow results. Pushed into the GitHub search as a `path:` qualifier when expressible; otherwise applied as a client-side post-filter.",
         },
       },
       required: ["query"],
@@ -269,8 +362,30 @@ export function createGrepFilesTool(ctx: RepoContext): Tool<unknown> {
       if (!parsed.ok) return parsed.error;
 
       const repoQualifier = `repo:${ctx.owner}/${ctx.repo}`;
-      const q = `${parsed.query} ${repoQualifier}`;
-      const url = `https://api.github.com/search/code?q=${encodeURIComponent(q)}&per_page=${MAX_GREP_RESULTS}`;
+      const queryParts = [parsed.query, repoQualifier];
+
+      // Try to push the glob into the GitHub search as a `path:` qualifier.
+      // When we can, the API-side filter runs before the per-page cap, so we
+      // don't silently drop glob-matching hits that sit past the cap.
+      let pushedDownPath: string | null = null;
+      let needsPostFilter = false;
+      if (parsed.glob) {
+        pushedDownPath = globToPathQualifier(parsed.glob);
+        if (pushedDownPath) {
+          queryParts.push(`path:${pushedDownPath}`);
+        } else {
+          needsPostFilter = true;
+        }
+      }
+
+      // When the glob cannot be pushed down and we have to post-filter, fetch
+      // the larger page so glob-matching hits past position 30 aren't lost.
+      const perPage = needsPostFilter
+        ? MAX_GREP_RESULTS_WITH_POSTFILTER
+        : MAX_GREP_RESULTS_DEFAULT;
+
+      const q = queryParts.join(" ");
+      const url = `https://api.github.com/search/code?q=${encodeURIComponent(q)}&per_page=${perPage}`;
 
       let response: CodeSearchResponse;
       try {
@@ -280,7 +395,7 @@ export function createGrepFilesTool(ctx: RepoContext): Tool<unknown> {
       }
 
       let hits = response.items.map((item) => item.path);
-      if (parsed.glob) {
+      if (needsPostFilter && parsed.glob) {
         const pattern = parsed.glob;
         hits = hits.filter((path) => minimatch(path, pattern));
       }
@@ -288,10 +403,26 @@ export function createGrepFilesTool(ctx: RepoContext): Tool<unknown> {
         return `No matches found for query: ${parsed.query}`;
       }
 
-      const header =
-        response.total_count > hits.length
-          ? `Showing ${hits.length} of ${response.total_count} total hits (API-capped at ${MAX_GREP_RESULTS}).\n`
-          : "";
+      // Ref-awareness disclosure — GitHub code search runs against the default
+      // branch regardless of `ctx.ref`.
+      const headerLines: string[] = [];
+      if (ctx.ref) {
+        headerLines.push(
+          "Results from the default branch (may differ from the analyzed ref):",
+        );
+      }
+      if (response.total_count > hits.length) {
+        if (needsPostFilter) {
+          headerLines.push(
+            `Showing ${hits.length} of ${response.total_count} total hits (API-capped at ${perPage}; glob applied as post-filter — consider a simpler glob or a more specific query if results appear truncated).`,
+          );
+        } else {
+          headerLines.push(
+            `Showing ${hits.length} of ${response.total_count} total hits (API-capped at ${perPage}).`,
+          );
+        }
+      }
+      const header = headerLines.length > 0 ? headerLines.join("\n") + "\n" : "";
       return header + hits.join("\n");
     },
   };
