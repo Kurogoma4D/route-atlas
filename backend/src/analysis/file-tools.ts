@@ -34,6 +34,9 @@ const MAX_TOOL_PAYLOAD_CHARS = 60_000;
 /** Maximum number of matches returned by `searchFiles` / `grepFiles`. */
 const MAX_SEARCH_RESULTS = 100;
 
+/** Maximum number of files `grepFiles` will fetch in one call. */
+const MAX_GREP_SCAN = 200;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -254,10 +257,15 @@ export function createFileTools(
           : "No files available to scan.";
       }
 
+      const scanLimitReached = candidates.length > MAX_GREP_SCAN;
+      const scannedCandidates = scanLimitReached
+        ? candidates.slice(0, MAX_GREP_SCAN)
+        : candidates;
+
       const results: string[] = [];
       let totalMatches = 0;
 
-      for (const entry of candidates) {
+      for (const entry of scannedCandidates) {
         let content: string;
         try {
           content = await getContent(entry);
@@ -287,10 +295,16 @@ export function createFileTools(
 
       if (results.length === 0) {
         const scope = glob ? ` under '${glob}'` : "";
-        return `No matches for '${query}'${scope} (scanned ${candidates.length} file(s)).`;
+        const limitNote = scanLimitReached
+          ? ` Stopped after ${MAX_GREP_SCAN} file(s); narrow the glob to scan more precisely.`
+          : "";
+        return `No matches for '${query}'${scope} (scanned ${scannedCandidates.length} of ${candidates.length} file(s)).${limitNote}`;
       }
 
-      const header = `${totalMatches} match(es) for '${query}' across ${results.length} file(s) (scanned ${candidates.length} file(s)):`;
+      const limitNote = scanLimitReached
+        ? ` Stopped after ${MAX_GREP_SCAN} file(s); narrow the glob to scan more precisely.`
+        : "";
+      const header = `${totalMatches} match(es) for '${query}' across ${results.length} file(s) (scanned ${scannedCandidates.length} of ${candidates.length} file(s)).${limitNote}`;
       return truncate(`${header}\n\n${results.join("\n\n")}`);
     },
   });

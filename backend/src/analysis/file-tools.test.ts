@@ -322,6 +322,28 @@ describe("createFileTools", () => {
       expect(out).not.toContain("src/app/login.tsx");
     });
 
+    it("caps broad scans so grepFiles does not fetch the entire repository", async () => {
+      const manyFiles = Array.from({ length: 205 }, (_, i) =>
+        makeEntry(`src/generated/file-${i}.tsx`),
+      );
+      const fetcher = vi.fn().mockResolvedValue("no match here");
+      const tools = createFileTools(
+        {
+          ...baseContext,
+          files: manyFiles,
+        },
+        {
+          fetchSingleFile: fetcher,
+        },
+      );
+      const out = await callTool(toolByName(tools, "grepFiles"), {
+        query: "router.push",
+      });
+      expect(fetcher).toHaveBeenCalledTimes(200);
+      expect(out).toMatch(/Stopped after 200 file\(s\)/);
+      expect(out).toMatch(/scanned 200 of 205 file\(s\)/);
+    });
+
     it("requires a query argument", async () => {
       const tools = createFileTools(baseContext, {
         fetchSingleFile: stubFetcher({}),
