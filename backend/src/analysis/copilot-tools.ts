@@ -66,6 +66,12 @@ const DEFAULT_MAX_RESULTS = 200;
 const DEFAULT_MAX_GREP_MATCHES = 50;
 const DEFAULT_MAX_FILE_BYTES = 200_000;
 const DEFAULT_GREP_CONTEXT_LINES = 2;
+/**
+ * Skip individual files larger than this when grepping, to avoid pulling
+ * multi-MB blobs (bundles, lockfiles, minified vendors) over the network
+ * just to scan a handful of lines.
+ */
+const GREP_MAX_FILE_BYTES = 512 * 1024;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -91,10 +97,28 @@ function matchGlob(path: string, pattern: string): boolean {
   return minimatch(path, pattern, { nocase: false, dot: true });
 }
 
+/**
+ * Truncate `content` so its UTF-8 byte-size fits within `maxBytes`.
+ *
+ * Iterates the string by Unicode characters (so we never split a multi-byte
+ * codepoint mid-byte) and measures each character's UTF-8 width via
+ * `Buffer.byteLength(char, "utf8")`. Reports the number of bytes dropped in
+ * the trailing comment so the model sees an accurate truncation notice even
+ * when the file contains non-ASCII content (e.g. Japanese comments, emoji).
+ */
 function truncateLines(content: string, maxBytes: number): string {
-  if (content.length <= maxBytes) return content;
-  const head = content.slice(0, maxBytes);
-  const bytesOmitted = content.length - maxBytes;
+  const totalBytes = Buffer.byteLength(content, "utf8");
+  if (totalBytes <= maxBytes) return content;
+
+  let headBytes = 0;
+  let head = "";
+  for (const char of content) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (headBytes + charBytes > maxBytes) break;
+    head += char;
+    headBytes += charBytes;
+  }
+  const bytesOmitted = totalBytes - headBytes;
   return `${head}\n\n// ... (${bytesOmitted} bytes truncated — file exceeded ${maxBytes} bytes)`;
 }
 
@@ -231,9 +255,16 @@ export async function handleGrepFiles(
   const hits: string[] = [];
   let totalMatches = 0;
   let scannedFiles = 0;
+  let skippedLargeFiles = 0;
 
   for (const entry of toScan) {
     if (totalMatches >= maxMatches) break;
+    // Per-file size guard: the tree API reports blob sizes, so we can skip
+    // oversized files without spending a Contents API call on them.
+    if (typeof entry.size === "number" && entry.size > GREP_MAX_FILE_BYTES) {
+      skippedLargeFiles++;
+      continue;
+    }
     scannedFiles++;
     let content: string;
     try {
@@ -277,9 +308,14 @@ export async function handleGrepFiles(
     }
   }
 
+  const skippedSuffix =
+    skippedLargeFiles > 0
+      ? `; ${skippedLargeFiles} large file${skippedLargeFiles === 1 ? "" : "s"} skipped (>${GREP_MAX_FILE_BYTES} bytes)`
+      : "";
+
   if (hits.length === 0) {
     return success(
-      `No matches for "${query}"${glob ? ` in "${glob}"` : ""} (scanned ${scannedFiles} files).`,
+      `No matches for "${query}"${glob ? ` in "${glob}"` : ""} (scanned ${scannedFiles} files${skippedSuffix}).`,
     );
   }
 
@@ -289,7 +325,7 @@ export async function handleGrepFiles(
       : "";
 
   return success(
-    `Matches for "${query}"${glob ? ` in "${glob}"` : ""} (${totalMatches} hit${totalMatches === 1 ? "" : "s"} in ${hits.length} file${hits.length === 1 ? "" : "s"}):\n\n${hits.join("\n\n")}${truncatedNote}`,
+    `Matches for "${query}"${glob ? ` in "${glob}"` : ""} (${totalMatches} hit${totalMatches === 1 ? "" : "s"} in ${hits.length} file${hits.length === 1 ? "" : "s"}${skippedSuffix}):\n\n${hits.join("\n\n")}${truncatedNote}`,
   );
 }
 

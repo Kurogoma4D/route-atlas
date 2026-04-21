@@ -373,6 +373,108 @@ ${componentSource}
  * Return regex patterns that match navigation-related code for the given framework.
  * These are derived from the Turn 3 `lookForItems` lists.
  */
+/**
+ * Literal substrings (not regexes) the Copilot `grepFiles` tool can use to
+ * locate navigation call sites in each supported framework.
+ *
+ * These must be **literal** — `grepFiles` performs a plain substring search,
+ * not a regex match. Keywords are chosen to be high-signal: each one should
+ * strongly suggest an actual navigation call when it appears in a source
+ * file, with few false positives.
+ *
+ * Used by `buildTurn3ToolPrompt` to hint the model what to grep for first.
+ */
+export const NAV_KEYWORDS_BY_FRAMEWORK: Record<FrameworkName, string[]> = {
+  // React Router / Next.js / Vue Router / Svelte / etc. (web-common default)
+  "react-router": ["useNavigate", "navigate(", "<Link ", "<NavLink ", 'to="'],
+  "nextjs-app": [
+    "router.push(",
+    "router.replace(",
+    "useRouter",
+    "<Link ",
+    "redirect(",
+  ],
+  "nextjs-pages": [
+    "router.push(",
+    "router.replace(",
+    "useRouter",
+    "<Link ",
+    "redirect(",
+  ],
+  "vue-router": [
+    "router.push(",
+    "router.replace(",
+    "<router-link",
+    "<RouterLink",
+    "$router.push",
+  ],
+  nuxt: ["navigateTo(", "useRouter", "<NuxtLink", "<router-link"],
+  angular: ["this.router.navigate", "router.navigate(", "routerLink", "Router"],
+  "tanstack-router": ["useNavigate", "navigate(", "<Link ", "router.navigate"],
+  remix: ["useNavigate", "navigate(", "<Link ", "<NavLink ", "redirect("],
+  sveltekit: ["goto(", "<a href", "$app/navigation"],
+  gatsby: ["<Link ", "navigate(", "gatsby-link"],
+  "solid-start": ["useNavigate", "navigate(", "<A ", "<Navigate "],
+  "qwik-city": ["useNavigate", "<Link ", "routeLoader$"],
+  // Plain HTML / Astro
+  "plain-html": ['href="', "href='", "window.location", "location.href"],
+  astro: ['href="', "href='", "Astro.redirect", "ViewTransitions"],
+  // Ember
+  ember: ["<LinkTo", "{{link-to", "this.router.transitionTo", "transitionTo("],
+  // React Native
+  "react-navigation": [
+    "navigation.navigate(",
+    "navigation.push(",
+    "navigation.replace(",
+    "Stack.Screen",
+  ],
+  "expo-router": ["router.push(", "router.replace(", "<Link ", "useRouter"],
+  // Flutter
+  "flutter-go-router": [
+    "context.go(",
+    "context.push(",
+    "context.goNamed(",
+    "GoRouter.of",
+  ],
+  "flutter-auto-route": [
+    "context.router.push",
+    "context.router.pushRoute",
+    "AutoRouter",
+  ],
+  "flutter-navigator": [
+    "Navigator.push(",
+    "Navigator.pushNamed(",
+    "Navigator.pushReplacement(",
+    "Navigator.pop(",
+  ],
+  // iOS
+  "ios-swiftui": [
+    "NavigationLink",
+    ".navigationDestination",
+    ".sheet(",
+    ".fullScreenCover(",
+  ],
+  "ios-uikit": [
+    "pushViewController",
+    ".present(",
+    "performSegue",
+    "popViewController",
+  ],
+  // Android
+  "android-navigation": [
+    "findNavController()",
+    "navController.navigate",
+    "NavController",
+    "app:destination",
+  ],
+  "android-compose-navigation": [
+    "navController.navigate(",
+    "rememberNavController",
+    "NavHost",
+    "composable(",
+  ],
+};
+
 export function getNavigationPatterns(framework: FrameworkName): RegExp[] {
   if (isReactNativeFramework(framework)) {
     return [
@@ -798,11 +900,13 @@ export function buildTurn3ToolPrompt(
   const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
   const fileList = formatFileList(componentFilePaths);
 
-  // Re-use the same pattern lists as the non-tool Turn 3 prompt so the
-  // model searches for the right keywords on this platform.
-  const patterns = getNavigationPatterns(framework)
-    .map((re) => `- ${re.source}`)
-    .join("\n");
+  // `grepFiles` is a LITERAL substring search, so embed literal keywords
+  // rather than regex source strings. The per-framework table is tuned so
+  // each keyword unambiguously points at a navigation call. Wrap each
+  // keyword in backticks so quote characters in the keyword itself (e.g.
+  // `to="`) aren't confused with the delimiter.
+  const keywords = NAV_KEYWORDS_BY_FRAMEWORK[framework] ?? [];
+  const keywordList = keywords.map((k) => `- \`${k}\``).join("\n");
 
   return `Identify every screen-to-screen transition (navigation) in this ${framework} project.
 
@@ -813,9 +917,9 @@ Component files in the repository:
 ${fileList}
 
 Instructions:
-1. Use grepFiles with the following regex-like substrings to locate navigation call sites:
-${patterns}
-   (grepFiles performs LITERAL substring search — pick representative keywords such as "router.push", "Navigator.push", "navigate(", "href=".)
+1. Use grepFiles with these LITERAL substrings (not regex) to locate navigation call sites:
+${keywordList}
+   (grepFiles performs a plain substring search. Feel free to add your own literal keywords when the ones above are insufficient.)
 2. For each hit, call readFile on the containing file to understand the "from" and "to" screens and the trigger.
 3. Only include transitions between the KNOWN screens listed above.
 4. Do NOT read the same file twice.

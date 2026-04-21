@@ -203,6 +203,65 @@ describe("handleReadFile", () => {
     expect(result.textResultForLlm.length).toBeLessThan(large.length);
   });
 
+  it("reports truncation in UTF-8 bytes (not code units) for non-ASCII content", async () => {
+    // Each Japanese character encodes as 3 bytes in UTF-8 but counts as 1
+    // JS string code unit. Using a 900-byte payload with a 300-byte cap
+    // would look like 300 chars of slack if we used `.length`, but the
+    // real UTF-8 size is 900 bytes — the reported truncation must match.
+    const ja = "あ".repeat(300); // 300 chars, 900 bytes in UTF-8
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockResponse({
+        name: "routes.ts",
+        path: "src/app/routes.ts",
+        sha: entry.sha,
+        size: Buffer.byteLength(ja, "utf8"),
+        type: "file",
+        content: base64Encode(ja),
+        encoding: "base64",
+      }),
+    );
+
+    const result = await handleReadFile(
+      ctx,
+      { path: "src/app/routes.ts" },
+      { maxBytes: 300 },
+    );
+    expect(result.resultType).toBe("success");
+    // 900 total bytes, head fits 100 chars × 3 bytes = 300 bytes,
+    // so ~600 bytes should be reported as truncated.
+    expect(result.textResultForLlm).toMatch(/600 bytes truncated/);
+    // And the head must not be split mid-codepoint.
+    const headMatch = /^(あ+)/.exec(result.textResultForLlm);
+    expect(headMatch).not.toBeNull();
+    expect(headMatch![1]).toBe("あ".repeat(100));
+  });
+
+  it("does not truncate when total UTF-8 byte count is within the limit", async () => {
+    // 50 'あ' chars = 150 bytes, which is below the 200-byte cap even
+    // though we'd see 50 code units if we accidentally used .length.
+    const ja = "あ".repeat(50);
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      mockResponse({
+        name: "routes.ts",
+        path: "src/app/routes.ts",
+        sha: entry.sha,
+        size: Buffer.byteLength(ja, "utf8"),
+        type: "file",
+        content: base64Encode(ja),
+        encoding: "base64",
+      }),
+    );
+
+    const result = await handleReadFile(
+      ctx,
+      { path: "src/app/routes.ts" },
+      { maxBytes: 200 },
+    );
+    expect(result.resultType).toBe("success");
+    expect(result.textResultForLlm).toBe(ja);
+    expect(result.textResultForLlm).not.toContain("bytes truncated");
+  });
+
   it("fails on empty path", async () => {
     const result = await handleReadFile(ctx, { path: "" });
     expect(result.resultType).toBe("failure");
@@ -351,6 +410,53 @@ describe("handleGrepFiles", () => {
     });
     expect(result.resultType).toBe("success");
     expect(result.textResultForLlm).toContain("No files matched glob");
+  });
+
+  it("skips files larger than GREP_MAX_FILE_BYTES without fetching them", async () => {
+    // 1 MB > 512 KB limit → must be skipped (no network call for it).
+    const hugeEntry = makeTreeEntry("bundle.js", { size: 1_048_576 });
+    const smallEntry = makeTreeEntry("src/home.tsx", { size: 200 });
+    const ctx = makeContext([hugeEntry, smallEntry]);
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockImplementation(
+      (url: string) => {
+        if (url.includes("/contents/src/home.tsx")) {
+          return Promise.resolve(
+            mockContentsResponse("src/home.tsx", "router.push('/next');\n"),
+          );
+        }
+        // The huge file must never be fetched.
+        throw new Error(`unexpected fetch: ${url}`);
+      },
+    );
+
+    const result = await handleGrepFiles(ctx, { query: "router.push" });
+    expect(result.resultType).toBe("success");
+    expect(result.textResultForLlm).toContain("src/home.tsx");
+    expect(result.textResultForLlm).not.toContain("bundle.js");
+    // The header mentions the skip so the model can see why results are thin.
+    expect(result.textResultForLlm).toContain("1 large file skipped");
+    // Fetch must have been called only for the small file, never for the huge blob.
+    const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
+    const fetchedUrls = fetchMock.mock.calls.map((c) => String(c[0]));
+    expect(fetchedUrls.some((u) => u.includes("/contents/bundle.js"))).toBe(
+      false,
+    );
+  });
+
+  it("reports skipped-large-file count in the no-match header too", async () => {
+    const hugeEntry = makeTreeEntry("giant.js", { size: 10_000_000 });
+    const smallEntry = makeTreeEntry("tiny.ts", { size: 10 });
+    const ctx = makeContext([hugeEntry, smallEntry]);
+
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      mockContentsResponse("tiny.ts", "nothing to see here\n"),
+    );
+
+    const result = await handleGrepFiles(ctx, { query: "router.push" });
+    expect(result.resultType).toBe("success");
+    expect(result.textResultForLlm).toContain("No matches");
+    expect(result.textResultForLlm).toContain("1 large file skipped");
   });
 });
 

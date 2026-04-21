@@ -541,6 +541,44 @@ describe("Analysis API routes", () => {
       expect(result).toHaveProperty("transitions");
     });
 
+    it("does not pre-fetch routing/component file contents in tool mode", async () => {
+      // Tool mode is always active: the pipeline receives `repoContext` and
+      // pulls files on demand via Copilot custom tools. Pre-fetching all
+      // routing + component file contents here would waste the GitHub API
+      // quota. Verify that `fetchFileContents` is only used for framework
+      // detection (package.json / pubspec / Podfile / settings.gradle), not
+      // for the routing/component blanket lists.
+      const githubMod = await import("../analysis/github-file-fetcher.js");
+      const fetchFileContentsMock = vi.mocked(githubMod.fetchFileContents);
+      fetchFileContentsMock.mockClear();
+
+      const jar = await authenticateAgent(app);
+
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
+      const { jobId } = await postRes.json();
+
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      // Collect every path ever passed to fetchFileContents across all calls.
+      const fetchedPaths = fetchFileContentsMock.mock.calls.flatMap((call) => {
+        const entries = call[2] as Array<{ path: string }>;
+        return entries.map((e) => e.path);
+      });
+
+      // app/page.tsx is the lone routing/component file in the mocked tree.
+      // It must not be fetched eagerly — the LLM would pull it via readFile.
+      expect(fetchedPaths).not.toContain("app/page.tsx");
+
+      // And the job must still complete successfully (path-only entries
+      // satisfy the pipeline's tool-mode consumption).
+      const job = await jobStore.getJob(jobId);
+      expect(job!.status).toBe("complete");
+    });
+
     it("reports error when pipeline fails", async () => {
       // Create an app with a failing adapter
       const failingClientManager = new CopilotClientManager(() => ({

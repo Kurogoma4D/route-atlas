@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
+  buildTurn3ToolPrompt,
   extractRelevantSnippets,
   getNavigationPatterns,
+  NAV_KEYWORDS_BY_FRAMEWORK,
 } from "./prompts.js";
 
 // ---------------------------------------------------------------------------
@@ -133,9 +135,9 @@ describe("getNavigationPatterns", () => {
 
   it("returns patterns for Android", () => {
     const patterns = getNavigationPatterns("android-compose-navigation");
-    expect(
-      patterns.some((p) => p.test("navController.navigate(\"home\")")),
-    ).toBe(true);
+    expect(patterns.some((p) => p.test('navController.navigate("home")'))).toBe(
+      true,
+    );
   });
 
   it("returns patterns for iOS", () => {
@@ -158,5 +160,129 @@ describe("getNavigationPatterns", () => {
       true,
     );
     expect(patterns.some((p) => p.test("<LinkTo @route='index'>"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// NAV_KEYWORDS_BY_FRAMEWORK — literal substrings for grepFiles (tool mode)
+// ---------------------------------------------------------------------------
+
+describe("NAV_KEYWORDS_BY_FRAMEWORK", () => {
+  const allFrameworks: string[] = [
+    "nextjs-app",
+    "nextjs-pages",
+    "nuxt",
+    "angular",
+    "tanstack-router",
+    "react-router",
+    "vue-router",
+    "remix",
+    "sveltekit",
+    "plain-html",
+    "android-navigation",
+    "android-compose-navigation",
+    "ios-swiftui",
+    "ios-uikit",
+    "flutter-go-router",
+    "flutter-auto-route",
+    "flutter-navigator",
+    "gatsby",
+    "astro",
+    "solid-start",
+    "expo-router",
+    "react-navigation",
+    "qwik-city",
+    "ember",
+  ];
+
+  it("defines keywords for every supported framework", () => {
+    for (const framework of allFrameworks) {
+      const keywords = (
+        NAV_KEYWORDS_BY_FRAMEWORK as Record<string, string[] | undefined>
+      )[framework];
+      expect(keywords, `missing keywords for ${framework}`).toBeDefined();
+      expect(keywords!.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it("keywords are literal substrings (no regex constructs)", () => {
+    // grepFiles is literal substring search — keywords must NOT include
+    // regex-only constructs that would never appear verbatim in source:
+    //  - backslash escapes:     \b, \s, \d, \w, \S, \W, \D
+    //  - alternations:          foo|bar
+    //  - quantifier-as-tail:    foo*, foo+, foo? (final-position quantifier)
+    //  - character classes:     [abc]
+    // We deliberately do NOT flag bare $ because it's a legal identifier
+    // character in JS/Vue (e.g. `$router.push`) and `^` because of C# / XPath.
+    const regexOnlyConstructs = /\\[bswdSWD]|\||[[\]]|[*+?]$/;
+    for (const [framework, keywords] of Object.entries(
+      NAV_KEYWORDS_BY_FRAMEWORK,
+    )) {
+      for (const kw of keywords) {
+        expect(
+          regexOnlyConstructs.test(kw),
+          `keyword "${kw}" for ${framework} looks like regex, not a literal`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("react-native keywords include navigation.navigate(", () => {
+    expect(NAV_KEYWORDS_BY_FRAMEWORK["react-navigation"]).toContain(
+      "navigation.navigate(",
+    );
+  });
+
+  it("flutter-navigator keywords include Navigator.push(", () => {
+    expect(NAV_KEYWORDS_BY_FRAMEWORK["flutter-navigator"]).toContain(
+      "Navigator.push(",
+    );
+  });
+
+  it("android-compose-navigation keywords include navController.navigate(", () => {
+    expect(NAV_KEYWORDS_BY_FRAMEWORK["android-compose-navigation"]).toContain(
+      "navController.navigate(",
+    );
+  });
+
+  it("ios-swiftui keywords include NavigationLink", () => {
+    expect(NAV_KEYWORDS_BY_FRAMEWORK["ios-swiftui"]).toContain(
+      "NavigationLink",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildTurn3ToolPrompt — uses NAV_KEYWORDS_BY_FRAMEWORK, not regex sources
+// ---------------------------------------------------------------------------
+
+describe("buildTurn3ToolPrompt", () => {
+  it("embeds literal keywords, not regex source strings", () => {
+    const prompt = buildTurn3ToolPrompt(
+      [{ id: "screen_home", path: "/" }],
+      ["src/home.tsx"],
+      "react-router",
+    );
+
+    // Every keyword for this framework must appear in the prompt.
+    for (const kw of NAV_KEYWORDS_BY_FRAMEWORK["react-router"]) {
+      expect(prompt).toContain(kw);
+    }
+    // And it must not accidentally embed regex constructs from
+    // getNavigationPatterns (e.g. \b, \s*).
+    expect(prompt).not.toMatch(/\\b/);
+    expect(prompt).not.toMatch(/\\s\*/);
+  });
+
+  it("produces non-empty keyword lists for every framework", () => {
+    for (const framework of Object.keys(NAV_KEYWORDS_BY_FRAMEWORK)) {
+      const prompt = buildTurn3ToolPrompt(
+        [{ id: "s", path: "/" }],
+        ["a.ts"],
+        framework as keyof typeof NAV_KEYWORDS_BY_FRAMEWORK,
+      );
+      // The bulleted keyword list (backtick-wrapped) must not be empty.
+      expect(prompt).toMatch(/- `[^`]+`/);
+    }
   });
 });
