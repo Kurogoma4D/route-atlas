@@ -322,7 +322,7 @@ export class AnalysisPipeline {
     const turn3Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
-      ...(useTools ? { tools: input.customTools } : {}),
+      ...(useTools ? { tools: input.customTools! } : {}),
     });
 
     const transitions = parseLLMJson<Transition[]>(

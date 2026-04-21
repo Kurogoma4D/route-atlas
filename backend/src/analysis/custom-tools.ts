@@ -198,6 +198,9 @@ export function createCustomTools(
   const byPath = new Map<string, TreeEntry>();
   for (const f of allFiles) byPath.set(f.path, f);
 
+  // Cache promises so concurrent LLM sessions don't fetch the same file twice.
+  const readCache = new Map<string, Promise<string>>();
+
   const readFileTool: Tool<unknown> = {
     name: "readFile",
     description:
@@ -216,18 +219,14 @@ export function createCustomTools(
         return `Error: File not found: ${path}`;
       }
 
-      try {
-        const content = await fetchSingleFileContent(
-          owner,
-          repo,
-          entry,
-          token,
-          branch,
-        );
-        return truncate(content, maxFileBytes);
-      } catch (err) {
-        return formatToolError(err);
-      }
+      const cached = readCache.get(path);
+      if (cached) return cached;
+
+      const result = fetchSingleFileContent(owner, repo, entry, token, branch)
+        .then((content) => truncate(content, maxFileBytes))
+        .catch((err: unknown) => formatToolError(err));
+      readCache.set(path, result);
+      return result;
     },
   };
 
@@ -274,7 +273,18 @@ export function createCustomTools(
       const glob = asString(args.glob);
 
       try {
-        const q = `${query} repo:${owner}/${repo}`;
+        // Strip any GitHub search qualifiers the LLM may have injected
+        // (e.g. `repo:attacker/private` would escape the intended scope).
+        const sanitizedQuery = query
+          .replace(
+            /\b(repo|org|user|language|path|extension|filename):[^\s]*/gi,
+            "",
+          )
+          .trim();
+        if (!sanitizedQuery) {
+          return "Error: 'query' must contain at least one search term.";
+        }
+        const q = `${sanitizedQuery} repo:${owner}/${repo}`;
         const url = `https://api.github.com/search/code?q=${encodeURIComponent(q)}&per_page=${maxSearchResults}`;
         const data = await githubFetch<SearchCodeResponse>(url, token);
 
@@ -283,7 +293,7 @@ export function createCustomTools(
           paths = paths.filter((p) => minimatch(p, glob));
         }
         if (paths.length === 0) return "(no matches)";
-        return paths.slice(0, maxSearchResults).join("\n");
+        return paths.join("\n");
       } catch (err) {
         return formatToolError(err);
       }

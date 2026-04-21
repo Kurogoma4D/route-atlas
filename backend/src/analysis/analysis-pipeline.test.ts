@@ -378,6 +378,9 @@ describe("AnalysisPipeline with customTools", () => {
     }
     // Turn 3 should also carry the tool set.
     expect(adapter.calls[4]!.tools).toEqual([fakeTool]);
+
+    // System prompt should be the tools-specific variant.
+    expect(adapter.calls[0]!.messages[0]!.content).toContain("readFile(path)");
   });
 
   it("omits the full source from Turn 2 / Turn 3 prompts when tools are in use", async () => {
@@ -432,6 +435,57 @@ describe("AnalysisPipeline with customTools", () => {
 
     for (const call of adapter.calls) {
       expect(call.tools).toBeUndefined();
+    }
+  });
+
+  it("treats customTools: [] the same as no tools (legacy embed flow)", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      customTools: [],
+    });
+
+    // Empty array → useTools is false → no tools on any call.
+    for (const call of adapter.calls) {
+      expect(call.tools).toBeUndefined();
+    }
+    // System prompt should be the plain (non-tools) variant.
+    expect(adapter.calls[0]!.messages[0]!.content).not.toContain("readFile(path)");
+  });
+
+  it("falls back to componentFiles paths when candidateComponentPaths is omitted", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      customTools: [fakeTool],
+      // candidateComponentPaths is intentionally omitted
+    });
+
+    // Turn 3 prompt should contain file paths derived from componentFiles.
+    const turn3Prompt =
+      adapter.calls[4]!.messages[adapter.calls[4]!.messages.length - 1]!.content;
+    for (const f of SAMPLE_COMPONENT_FILES) {
+      expect(turn3Prompt).toContain(f.path);
     }
   });
 });

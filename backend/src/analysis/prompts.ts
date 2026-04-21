@@ -870,6 +870,20 @@ export function buildTurn3PromptWithTools(
 - coordinator.navigate(to:) (Coordinator pattern)
 - TabView tab switching
 - dismiss(), navigationController?.popViewController() (back navigation)`;
+  } else if (framework === "tanstack-router") {
+    lookForItems = `- <Link to="..."/> from @tanstack/react-router
+- useNavigate() hook with navigate({ to: '...' })
+- router.navigate() programmatic navigation
+- <Navigate to="..."/> component
+- redirect() in loader or beforeLoad hooks
+- window.location / location.href assignments`;
+  } else if (framework === "gatsby") {
+    lookForItems = `- <Link to="..."> from "gatsby" package
+- navigate() from "gatsby" package
+- navigate() from "@reach/router"
+- <a href="..."> for external links
+- window.location / location.href assignments
+- Form submit handlers that navigate`;
   } else if (isAstro) {
     lookForItems = `- <a href="..."> (Astro uses standard HTML anchor tags for navigation by default)
 - Astro.redirect() in frontmatter (server-side redirects)
@@ -878,6 +892,29 @@ export function buildTurn3PromptWithTools(
 - Form submit handlers that navigate
 - data-astro-reload attribute (forces full page reload)
 - Programmatic navigation in client-side island components (React/Vue/Svelte within client:* directives)`;
+  } else if (framework === "solid-start") {
+    lookForItems = `- <A href="..."> component from @solidjs/router
+- useNavigate() hook for programmatic navigation
+- redirect() in server functions (server-side redirects)
+- <a href="..."> standard anchor tags
+- window.location / location.href assignments
+- Form submit handlers that navigate`;
+  } else if (framework === "qwik-city") {
+    lookForItems = `- <Link href="..."> component from @builder.io/qwik-city
+- useNavigate() hook for programmatic navigation
+- <Form> component with action-based navigation (@builder.io/qwik-city)
+- <a href="..."> standard anchor tags
+- window.location / location.href assignments
+- Form submit handlers that navigate`;
+  } else if (isEmberFramework(framework)) {
+    lookForItems = `- <LinkTo @route="..."> component (Ember template navigation)
+- this.transitionTo('routeName') in route classes
+- this.replaceWith('routeName') in route classes
+- this.router.transitionTo('routeName') via router service
+- this.router.replaceWith('routeName') via router service
+- {{link-to 'routeName'}} classic helper syntax
+- <a href="..."> standard anchor tags
+- window.location / location.href assignments`;
   } else {
     lookForItems = `- <Link>, <a href="...">, routerLink
 - router.push(), router.navigate(), navigate()

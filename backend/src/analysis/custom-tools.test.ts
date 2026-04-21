@@ -234,6 +234,29 @@ describe("custom-tools", () => {
       expect(result.length).toBeLessThan(big.length);
       expect(result).toContain("[truncated");
     });
+
+    it("caches repeated readFile calls for the same path", async () => {
+      fetchMock.mockResolvedValue(
+        mockFetchResponse({
+          name: "home.tsx",
+          path: "src/app/home.tsx",
+          sha: "abc",
+          size: 11,
+          type: "file",
+          content: base64("hello world"),
+          encoding: "base64",
+        }),
+      );
+
+      const [readFile] = createCustomTools(BASE_OPTIONS);
+      const r1 = await readFile.handler({ path: "src/app/home.tsx" }, INVOCATION);
+      const r2 = await readFile.handler({ path: "src/app/home.tsx" }, INVOCATION);
+
+      expect(r1).toBe("hello world");
+      expect(r2).toBe("hello world");
+      // Network should be hit only once despite two calls.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -275,6 +298,12 @@ describe("custom-tools", () => {
       const [, searchFiles] = createCustomTools(BASE_OPTIONS);
       const result = await searchFiles.handler({}, INVOCATION);
       expect(result as string).toMatch(/pattern/i);
+    });
+
+    it("rejects non-object arguments", async () => {
+      const [, searchFiles] = createCustomTools(BASE_OPTIONS);
+      const result = await searchFiles.handler("oops", INVOCATION);
+      expect(result).toBe("Error: invalid arguments.");
     });
 
     it("does NOT hit the network", async () => {
@@ -379,6 +408,38 @@ describe("custom-tools", () => {
       const [, , grepFiles] = createCustomTools(BASE_OPTIONS);
       const result = await grepFiles.handler({}, INVOCATION);
       expect(result as string).toMatch(/query/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("strips injected repo: qualifiers from the query to prevent scope bypass", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockFetchResponse({
+          total_count: 0,
+          incomplete_results: false,
+          items: [],
+        }),
+      );
+
+      const [, , grepFiles] = createCustomTools(BASE_OPTIONS);
+      await grepFiles.handler(
+        { query: "secret repo:attacker/private-repo" },
+        INVOCATION,
+      );
+
+      const calledUrl = fetchMock.mock.calls[0][0] as string;
+      const decodedUrl = decodeURIComponent(calledUrl);
+      // The injected repo qualifier must be stripped; only the server-enforced one remains.
+      expect(decodedUrl).not.toContain("repo:attacker/private-repo");
+      expect(decodedUrl).toContain("repo:octo/cat");
+    });
+
+    it("returns an error when query is empty after stripping qualifiers", async () => {
+      const [, , grepFiles] = createCustomTools(BASE_OPTIONS);
+      const result = await grepFiles.handler(
+        { query: "repo:attacker/private-repo" },
+        INVOCATION,
+      );
+      expect(result as string).toContain("Error:");
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
