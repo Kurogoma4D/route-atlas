@@ -79,6 +79,16 @@ const DISALLOWED_QUALIFIER_RE =
  */
 const DISALLOWED_BOOLEAN_RE = /(^|\s)(AND|OR|NOT)(\s|$)|[()]/;
 
+/**
+ * Allowed characters in a `glob` argument. Real globs never contain whitespace,
+ * quotes, colons, or `@` / `#` / `;`. Restricting to this set means an attacker
+ * cannot smuggle a GitHub search qualifier (e.g. `org:victim`) through `glob`
+ * and have it appended verbatim to the search query. The set covers every
+ * minimatch feature we support: path separators, wildcards, globstars,
+ * character classes, brace expansion, negation, and escapes.
+ */
+const ALLOWED_GLOB_RE = /^[A-Za-z0-9_./\-*{}[\],!?]+$/;
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
@@ -262,14 +272,60 @@ function parseGrepFilesArgs(
     };
   }
   const globValue = record.glob;
-  if (globValue !== undefined && !isNonEmptyString(globValue)) {
-    return {
-      ok: false,
-      error: "Error: `glob` must be a non-empty string if provided.",
-    };
+  if (globValue !== undefined) {
+    if (!isNonEmptyString(globValue)) {
+      return {
+        ok: false,
+        error: "Error: `glob` must be a non-empty string if provided.",
+      };
+    }
+    // `glob` is eventually concatenated into the GitHub search query as
+    // `path:<translated>`, so it is an injection sink just like `query`. Reject
+    // the same qualifier / boolean patterns, then enforce a stricter character
+    // allow-list (real globs have no whitespace, quotes, or `:`).
+    if (DISALLOWED_QUALIFIER_RE.test(globValue)) {
+      return {
+        ok: false,
+        error:
+          "Error: `glob` must not contain GitHub search qualifiers like `repo:`, `org:`, `path:`, etc.",
+      };
+    }
+    if (DISALLOWED_BOOLEAN_RE.test(globValue)) {
+      return {
+        ok: false,
+        error:
+          "Error: `glob` must not contain boolean operators (`AND`, `OR`, `NOT`) or parentheses.",
+      };
+    }
+    if (!ALLOWED_GLOB_RE.test(globValue)) {
+      return {
+        ok: false,
+        error:
+          "Error: `glob` contains disallowed characters. Only letters, digits, `_`, `.`, `/`, `-`, `*`, `?`, `{}`, `[]`, `,`, and `!` are permitted.",
+      };
+    }
   }
   return { ok: true, query: record.query, glob: globValue };
 }
+
+/**
+ * Result of translating a glob into a GitHub Search `path:` qualifier.
+ *
+ *   - `{ kind: "exact", path }`  — the glob is fully representable as a path
+ *     prefix; the GitHub-side filter is exact and no post-filter is needed.
+ *     Examples: `src/app/`, `src/app/` + globstar, `src/app/foo.ts`.
+ *   - `{ kind: "prefix", path }` — the glob translates to a prefix but also
+ *     carries a suffix / filter the GitHub API cannot express (e.g. a
+ *     `.tsx`-only filter). The prefix is still pushed down to narrow the
+ *     server-side search, but the caller MUST re-validate each hit with the
+ *     original glob.
+ *     Examples: `src/app/` + globstar + `.tsx`, `src/app/` + `.tsx`-glob.
+ *   - `null`                     — the glob cannot be pushed down at all
+ *     (e.g. leading globstar, brace expansion, negation).
+ */
+export type PathQualifier =
+  | { kind: "exact"; path: string }
+  | { kind: "prefix"; path: string };
 
 /**
  * Try to translate a minimatch-style glob into a GitHub Search `path:`
@@ -280,40 +336,58 @@ function parseGrepFilesArgs(
  * markers. If the glob uses features that do not map cleanly (globstars
  * spanning multiple directories, brace expansion, negation, or character
  * classes) we return `null` and fall back to a client-side post-filter.
+ *
+ * Crucially, the result distinguishes "exact" translations (no filter lost)
+ * from "prefix" approximations (e.g. a `.tsx` suffix dropped), so callers can
+ * decide whether an additional client-side post-filter is required. Without
+ * this distinction the pushed-down prefix silently discards the suffix and
+ * files outside the suffix can crowd real matches past the per-page cap.
  */
-export function globToPathQualifier(glob: string): string | null {
+export function globToPathQualifier(glob: string): PathQualifier | null {
   if (!glob) return null;
   // Reject features that GitHub's `path:` cannot represent faithfully.
   if (/[{}![\]]/.test(glob)) return null;
 
-  // Trim a single leading `./` — harmless but noisy.
-  const g = glob.replace(/^\.\//, "");
+  // Trim a single leading `./` — harmless but noisy. Also strip a single
+  // trailing `/` so `src/app/` and `src/app` normalise to the same prefix.
+  let g = glob.replace(/^\.\//, "");
+  if (g.endsWith("/") && g.length > 1) g = g.slice(0, -1);
 
-  // Single-segment cases we can map directly.
-  //   src/app/**        -> src/app
-  //   src/app/**/*.tsx  -> src/app (we lose the extension filter, which is
-  //                        still safe: fewer false negatives than the cap).
-  //   **/routes.ts      -> cannot be pushed down (globstar at head).
-  //   src/*.ts          -> src (single-segment star; path: is a prefix match,
-  //                        so this is a safe over-approximation).
-  if (g.startsWith("**/")) return null;
+  // Leading globstar — prefix is empty, nothing to push down.
+  if (g.startsWith("**/") || g === "**") return null;
 
-  // If there's a globstar mid-path, take the prefix up to the globstar and
-  // push *that* down — post-filter still runs to tighten the result set.
-  const globstarIdx = g.indexOf("/**");
-  if (globstarIdx !== -1) {
-    const prefix = g.slice(0, globstarIdx);
-    if (prefix.length === 0 || prefix.includes("*")) return null;
-    return prefix;
+  // Trailing globstar (`src/app/**`) — represents everything under the prefix,
+  // which `path:` matches exactly. No suffix filter to preserve.
+  if (g.endsWith("/**")) {
+    const prefix = g.slice(0, -3);
+    if (prefix.length === 0 || prefix.includes("*") || prefix.includes("?")) {
+      return null;
+    }
+    return { kind: "exact", path: prefix };
   }
 
-  // No globstar: strip any trailing filename/pattern segment that contains
-  // wildcards, leaving a plain directory prefix.
+  // Mid-path globstar (`src/app/**/*.tsx`) — prefix is the directory before
+  // the globstar, but everything after the globstar is a filter `path:`
+  // cannot express, so we must post-filter.
+  const globstarIdx = g.indexOf("/**/");
+  if (globstarIdx !== -1) {
+    const prefix = g.slice(0, globstarIdx);
+    if (prefix.length === 0 || prefix.includes("*") || prefix.includes("?")) {
+      return null;
+    }
+    return { kind: "prefix", path: prefix };
+  }
+
+  // No globstar. Split into path segments and peel off any trailing segments
+  // that contain wildcards — those are the file-name/extension filter we will
+  // lose when we push down only the directory prefix.
   const segments = g.split("/");
+  let droppedWildcardSegment = false;
   while (segments.length > 0) {
     const tail = segments[segments.length - 1];
     if (tail.includes("*") || tail.includes("?")) {
       segments.pop();
+      droppedWildcardSegment = true;
       continue;
     }
     break;
@@ -321,7 +395,9 @@ export function globToPathQualifier(glob: string): string | null {
   if (segments.length === 0) return null;
   const prefix = segments.join("/");
   if (prefix.includes("*") || prefix.includes("?")) return null;
-  return prefix;
+  return droppedWildcardSegment
+    ? { kind: "prefix", path: prefix }
+    : { kind: "exact", path: prefix };
 }
 
 /** Shape of a hit in GitHub's code search response. */
@@ -367,19 +443,30 @@ export function createGrepFilesTool(ctx: RepoContext): Tool<unknown> {
       // Try to push the glob into the GitHub search as a `path:` qualifier.
       // When we can, the API-side filter runs before the per-page cap, so we
       // don't silently drop glob-matching hits that sit past the cap.
-      let pushedDownPath: string | null = null;
+      //
+      // `exact`  — pushdown is faithful; no post-filter needed, per_page = 30.
+      // `prefix` — pushdown narrows the search but a suffix filter (e.g.
+      //            `*.tsx`) was dropped; post-filter MUST still run client-side
+      //            and per_page bumps to 100 so suffix-matching hits past the
+      //            default cap aren't lost.
+      // `null`   — no pushdown; post-filter runs and per_page = 100.
+      let qualifier: PathQualifier | null = null;
       let needsPostFilter = false;
       if (parsed.glob) {
-        pushedDownPath = globToPathQualifier(parsed.glob);
-        if (pushedDownPath) {
-          queryParts.push(`path:${pushedDownPath}`);
+        qualifier = globToPathQualifier(parsed.glob);
+        if (qualifier) {
+          queryParts.push(`path:${qualifier.path}`);
+          if (qualifier.kind === "prefix") {
+            needsPostFilter = true;
+          }
         } else {
           needsPostFilter = true;
         }
       }
 
-      // When the glob cannot be pushed down and we have to post-filter, fetch
-      // the larger page so glob-matching hits past position 30 aren't lost.
+      // When the glob cannot be fully pushed down and we have to post-filter,
+      // fetch the larger page so glob-matching hits past position 30 aren't
+      // lost behind the default cap.
       const perPage = needsPostFilter
         ? MAX_GREP_RESULTS_WITH_POSTFILTER
         : MAX_GREP_RESULTS_DEFAULT;
@@ -413,8 +500,12 @@ export function createGrepFilesTool(ctx: RepoContext): Tool<unknown> {
       }
       if (response.total_count > hits.length) {
         if (needsPostFilter) {
+          const filterNote =
+            qualifier && qualifier.kind === "prefix"
+              ? "prefix-pushdown + client-side filter"
+              : "client-side filter only";
           headerLines.push(
-            `Showing ${hits.length} of ${response.total_count} total hits (API-capped at ${perPage}; glob applied as post-filter — consider a simpler glob or a more specific query if results appear truncated).`,
+            `Showing ${hits.length} of ${response.total_count} total hits (API-capped at ${perPage}; glob applied via ${filterNote} — consider a simpler glob or a more specific query if results appear truncated).`,
           );
         } else {
           headerLines.push(

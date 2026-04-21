@@ -294,7 +294,7 @@ describe("grepFiles tool", () => {
     expect(url).toContain(encodeURIComponent("useNavigate"));
   });
 
-  it("pushes a simple glob into the search URL as a `path:` qualifier", async () => {
+  it("pushes a simple glob into the search URL as a `path:` qualifier (exact pushdown, per_page stays 30)", async () => {
     (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce(
@@ -313,8 +313,66 @@ describe("grepFiles tool", () => {
     const url = mockFetch.mock.calls[0][0] as string;
     // `path:src/app` must be pushed down so the filter runs before the cap.
     expect(url).toContain(encodeURIComponent("path:src/app"));
-    // Per-page cap stays at 30 when the glob was pushed down successfully.
+    // Per-page cap stays at 30 when the glob was pushed down exactly.
     expect(url).toContain("per_page=30");
+  });
+
+  it("bumps per_page to 100 AND post-filters when a glob has a suffix the API can't express (prefix-pushdown + client-side filter)", async () => {
+    // Finding 1 repro: `src/app/**/*.tsx` used to lower the prefix down but
+    // silently drop the `*.tsx` suffix, so .js files filling the first 30
+    // positions crowded a real .tsx match past the cap. The fix bumps
+    // per_page to 100 AND keeps the post-filter so only .tsx hits survive.
+    //
+    // Mock payload: 30 .js hits first, then the real .tsx hit at position 31.
+    const items = [
+      ...Array.from({ length: 30 }, (_, i) => ({
+        path: `src/app/early_${i}.js`,
+      })),
+      { path: "src/app/Home.tsx" },
+    ];
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce(
+      mockResponse({ total_count: 31, items }),
+    );
+
+    const tool = createGrepFilesTool(ctx());
+    const output = await invoke(tool, {
+      query: "foo",
+      glob: "src/app/**/*.tsx",
+    });
+
+    // The .tsx hit MUST appear — it's the only one that matches the glob.
+    expect(output).toContain("src/app/Home.tsx");
+    // The .js hits must be filtered out client-side.
+    expect(output).not.toContain("src/app/early_0.js");
+
+    const mockFetch = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const url = mockFetch.mock.calls[0][0] as string;
+    // The prefix (`src/app`) is still pushed down to narrow the server search.
+    expect(url).toContain(encodeURIComponent("path:src/app"));
+    // Per-page cap bumped to 100 so suffix-matching hits beyond position 30
+    // aren't lost behind the default cap.
+    expect(url).toContain("per_page=100");
+  });
+
+  it("notes 'prefix-pushdown + client-side filter' in the header for approximate globs", async () => {
+    (
+      globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce(
+      mockResponse({
+        total_count: 250,
+        items: [{ path: "src/app/Home.tsx" }],
+      }),
+    );
+
+    const tool = createGrepFilesTool(ctx());
+    const output = await invoke(tool, {
+      query: "foo",
+      glob: "src/app/**/*.tsx",
+    });
+
+    expect(output).toContain("prefix-pushdown + client-side filter");
   });
 
   it("falls back to a client-side post-filter for complex globs and raises per-page to 100", async () => {
@@ -343,7 +401,7 @@ describe("grepFiles tool", () => {
     expect(url).toContain("per_page=100");
   });
 
-  it("mentions the post-filter limit in the header when total_count exceeds hits for a complex glob", async () => {
+  it("mentions the client-side filter in the header when total_count exceeds hits for a complex glob", async () => {
     (
       globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     ).mockResolvedValueOnce(
@@ -357,7 +415,9 @@ describe("grepFiles tool", () => {
     const tool = createGrepFilesTool(ctx());
     const output = await invoke(tool, { query: "foo", glob: "**/*.tsx" });
 
-    expect(output).toContain("post-filter");
+    // `**/*.tsx` has a leading globstar — no prefix can be pushed down, so
+    // the glob is applied purely as a client-side filter.
+    expect(output).toContain("client-side filter only");
     expect(output).toContain("100");
   });
 
@@ -462,20 +522,50 @@ describe("grepFiles tool", () => {
   // globToPathQualifier — unit coverage for the pushdown translator.
   // -----------------------------------------------------------------------
   describe("globToPathQualifier", () => {
-    it("maps a trailing globstar to the directory prefix", () => {
-      expect(globToPathQualifier("src/app/**")).toBe("src/app");
+    it("maps a trailing globstar to an exact prefix (no suffix filter dropped)", () => {
+      // `src/app/**` matches everything under src/app — `path:src/app` is
+      // an exact translation, no post-filter needed.
+      expect(globToPathQualifier("src/app/**")).toEqual({
+        kind: "exact",
+        path: "src/app",
+      });
     });
 
-    it("maps a mid-path globstar to the prefix before it", () => {
-      expect(globToPathQualifier("src/app/**/*.tsx")).toBe("src/app");
+    it("maps a trailing slash directory to an exact prefix", () => {
+      expect(globToPathQualifier("src/app/")).toEqual({
+        kind: "exact",
+        path: "src/app",
+      });
     });
 
-    it("strips a trailing wildcard segment", () => {
-      expect(globToPathQualifier("src/app/*.tsx")).toBe("src/app");
+    it("maps a plain file path (no wildcards) to an exact prefix", () => {
+      expect(globToPathQualifier("src/app/page.tsx")).toEqual({
+        kind: "exact",
+        path: "src/app/page.tsx",
+      });
     });
 
-    it("returns the directory for a plain file glob", () => {
-      expect(globToPathQualifier("src/lib/*.ts")).toBe("src/lib");
+    it("maps a mid-path globstar + suffix to a PREFIX approximation (suffix filter must still run)", () => {
+      // `src/app/**/*.tsx` — prefix is src/app, but `*.tsx` cannot be pushed
+      // down. Caller must post-filter.
+      expect(globToPathQualifier("src/app/**/*.tsx")).toEqual({
+        kind: "prefix",
+        path: "src/app",
+      });
+    });
+
+    it("strips a trailing wildcard segment as a PREFIX approximation", () => {
+      expect(globToPathQualifier("src/app/*.tsx")).toEqual({
+        kind: "prefix",
+        path: "src/app",
+      });
+    });
+
+    it("returns a PREFIX approximation for a plain file glob", () => {
+      expect(globToPathQualifier("src/lib/*.ts")).toEqual({
+        kind: "prefix",
+        path: "src/lib",
+      });
     });
 
     it("returns null for a leading-globstar glob", () => {
@@ -501,5 +591,46 @@ describe("grepFiles tool", () => {
     it("returns null for an empty string", () => {
       expect(globToPathQualifier("")).toBeNull();
     });
+
+    it("returns null for a bare globstar", () => {
+      expect(globToPathQualifier("**")).toBeNull();
+    });
+  });
+
+  // -----------------------------------------------------------------------
+  // Finding 2 (iter 2): `glob` is a search-injection sink. Apply the same
+  // qualifier / boolean rejection as `query`, plus a strict char allow-list.
+  // -----------------------------------------------------------------------
+  describe("rejects prompt-injected globs that try to escape the repo scope", () => {
+    const attackerInputs: Array<{ label: string; glob: string }> = [
+      { label: "adds another repo: qualifier", glob: "src OR repo:evil/leak" },
+      { label: "org: widen", glob: "src OR org:victim/**" },
+      { label: "user: widen", glob: "src OR user:victim" },
+      { label: "embedded path:", glob: "foo path:/etc" },
+      { label: "embedded language:", glob: "src language:python" },
+      { label: "embedded fork:", glob: "src AND fork:true" },
+      { label: "quote injection", glob: '"; rm -rf /; "' },
+      { label: "bare double quote", glob: 'src"' },
+      { label: "whitespace", glob: "src /app" },
+      { label: "tab whitespace", glob: "src\tapp" },
+      { label: "leading space", glob: " src/**" },
+      { label: "OR boolean", glob: "src OR lib" },
+      { label: "AND boolean", glob: "src AND lib" },
+      { label: "parenthesised group", glob: "(src/**)" },
+      { label: "semicolon shell-ish", glob: "src;rm" },
+      { label: "backtick", glob: "src`whoami`" },
+      { label: "dollar subshell", glob: "src$PWD" },
+      { label: "colon (search qualifier separator)", glob: "src:lib" },
+    ];
+
+    for (const { label, glob } of attackerInputs) {
+      it(label, async () => {
+        const tool = createGrepFilesTool(ctx());
+        const output = await invoke(tool, { query: "secret", glob });
+        expect(output).toMatch(/^Error:/);
+        // The offending glob must never reach GitHub.
+        expect(globalThis.fetch).not.toHaveBeenCalled();
+      });
+    }
   });
 });
