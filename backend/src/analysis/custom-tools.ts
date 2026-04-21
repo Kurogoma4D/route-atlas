@@ -171,6 +171,33 @@ export interface SearchCodeResponse {
 }
 
 // ---------------------------------------------------------------------------
+// Sensitive-path filtering
+// ---------------------------------------------------------------------------
+
+/**
+ * Patterns that identify files that must never be handed to the LLM, even if
+ * they happen to be committed to the repository tree. Matches are checked
+ * against both the full path and the basename.
+ */
+const SENSITIVE_PATH_RE: RegExp[] = [
+  /^\.env(\..+)?$/i,
+  /\.key$/i,
+  /\.pem$/i,
+  /\.p12$/i,
+  /\.pfx$/i,
+  /credential/i,
+  /secret/i,
+  /private[_-]?key/i,
+];
+
+function isSensitivePath(filePath: string): boolean {
+  const basename = filePath.split("/").pop() ?? filePath;
+  return SENSITIVE_PATH_RE.some(
+    (re) => re.test(basename) || re.test(filePath),
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tool factory
 // ---------------------------------------------------------------------------
 
@@ -195,11 +222,19 @@ export function createCustomTools(
   } = options;
 
   // Index the tree by path for O(1) lookups inside readFile.
+  // Sensitive files (credentials, keys, .env, …) are excluded so the LLM
+  // cannot read them even if they are committed to the repository.
   const byPath = new Map<string, TreeEntry>();
-  for (const f of allFiles) byPath.set(f.path, f);
+  for (const f of allFiles) {
+    if (!isSensitivePath(f.path)) byPath.set(f.path, f);
+  }
 
   // Cache promises so concurrent LLM sessions don't fetch the same file twice.
   const readCache = new Map<string, Promise<string>>();
+  // Cache for grepFiles results (keyed on sanitizedQuery + "\0" + glob).
+  const grepCache = new Map<string, Promise<string>>();
+  // Cache for searchFiles results (keyed on the glob pattern).
+  const searchCache = new Map<string, string>();
 
   const readFileTool: Tool<unknown> = {
     name: "readFile",
@@ -216,7 +251,7 @@ export function createCustomTools(
 
       const entry = byPath.get(path);
       if (!entry) {
-        return `Error: File not found: ${path}`;
+        return "Error: File not found.";
       }
 
       const cached = readCache.get(path);
@@ -224,7 +259,11 @@ export function createCustomTools(
 
       const result = fetchSingleFileContent(owner, repo, entry, token, branch)
         .then((content) => truncate(content, maxFileBytes))
-        .catch((err: unknown) => formatToolError(err));
+        .catch((err: unknown) => {
+          // Do not cache errors so transient failures can be retried.
+          readCache.delete(path);
+          return formatToolError(err);
+        });
       readCache.set(path, result);
       return result;
     },
@@ -244,6 +283,10 @@ export function createCustomTools(
       }
 
       const matched: string[] = [];
+
+      const cachedSearch = searchCache.get(pattern);
+      if (cachedSearch !== undefined) return cachedSearch;
+
       for (const f of allFiles) {
         if (minimatch(f.path, pattern)) {
           matched.push(f.path);
@@ -252,9 +295,12 @@ export function createCustomTools(
       }
 
       if (matched.length === 0) {
+        searchCache.set(pattern, "(no files matched)");
         return "(no files matched)";
       }
-      return matched.join("\n");
+      const searchResult = matched.join("\n");
+      searchCache.set(pattern, searchResult);
+      return searchResult;
     },
   };
 
@@ -277,23 +323,36 @@ export function createCustomTools(
         // (e.g. `repo:attacker/private` would escape the intended scope).
         const sanitizedQuery = query
           .replace(
-            /\b(repo|org|user|language|path|extension|filename):[^\s]*/gi,
+            /\b(repo|org|user|language|path|extension|filename|in|type|fork|size|stars|forks):[^\s]*/gi,
             "",
           )
           .trim();
         if (!sanitizedQuery) {
           return "Error: 'query' must contain at least one search term.";
         }
-        const q = `${sanitizedQuery} repo:${owner}/${repo}`;
-        const url = `https://api.github.com/search/code?q=${encodeURIComponent(q)}&per_page=${maxSearchResults}`;
-        const data = await githubFetch<SearchCodeResponse>(url, token);
 
-        let paths = data.items.map((item) => item.path);
-        if (glob) {
-          paths = paths.filter((p) => minimatch(p, glob));
-        }
-        if (paths.length === 0) return "(no matches)";
-        return paths.join("\n");
+        const cacheKey = `${sanitizedQuery}\0${glob ?? ""}`;
+        const cachedGrep = grepCache.get(cacheKey);
+        if (cachedGrep) return cachedGrep;
+
+        const grepResult: Promise<string> = (async () => {
+          const q = `${sanitizedQuery} repo:${owner}/${repo}`;
+          const url = `https://api.github.com/search/code?q=${encodeURIComponent(q)}&per_page=${maxSearchResults}`;
+          const data = await githubFetch<SearchCodeResponse>(url, token);
+
+          let paths = data.items.map((item) => item.path);
+          if (glob) {
+            paths = paths.filter((p) => minimatch(p, glob));
+          }
+          if (paths.length === 0) return "(no matches)";
+          return paths.join("\n");
+        })().catch((err: unknown) => {
+          // Do not cache errors so transient failures can be retried.
+          grepCache.delete(cacheKey);
+          return formatToolError(err);
+        });
+        grepCache.set(cacheKey, grepResult);
+        return grepResult;
       } catch (err) {
         return formatToolError(err);
       }

@@ -488,6 +488,39 @@ describe("AnalysisPipeline with customTools", () => {
       expect(turn3Prompt).toContain(f.path);
     }
   });
+
+  it("uses the tools branch when both componentFiles and customTools are provided", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      candidateComponentPaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
+      customTools: [fakeTool],
+    });
+
+    // Turn 2 prompts must NOT embed raw component source — tools branch wins.
+    const turn2Prompts = adapter.calls
+      .slice(1, 4)
+      .map((c) => c.messages[c.messages.length - 1]!.content);
+    for (const prompt of turn2Prompts) {
+      expect(prompt).not.toContain("*ngIf=\"loading\"");
+      expect(prompt).toContain("readFile");
+    }
+
+    // All Turn 2 and Turn 3 calls must carry the tool set.
+    for (let i = 1; i <= 4; i++) {
+      expect(adapter.calls[i]!.tools).toEqual([fakeTool]);
+    }
+  });
 });
 
 describe("isSupportedModel", () => {

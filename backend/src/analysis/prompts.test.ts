@@ -2,6 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   extractRelevantSnippets,
   getNavigationPatterns,
+  SYSTEM_PROMPT_WITH_TOOLS,
+  buildTurn2PromptWithTools,
+  buildTurn3PromptWithTools,
 } from "./prompts.js";
 
 // ---------------------------------------------------------------------------
@@ -158,5 +161,134 @@ describe("getNavigationPatterns", () => {
       true,
     );
     expect(patterns.some((p) => p.test("<LinkTo @route='index'>"))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SYSTEM_PROMPT_WITH_TOOLS
+// ---------------------------------------------------------------------------
+
+describe("SYSTEM_PROMPT_WITH_TOOLS", () => {
+  it("includes the base system prompt instructions", () => {
+    expect(SYSTEM_PROMPT_WITH_TOOLS).toContain("valid JSON");
+  });
+
+  it("documents the three custom tools", () => {
+    expect(SYSTEM_PROMPT_WITH_TOOLS).toContain("readFile(path)");
+    expect(SYSTEM_PROMPT_WITH_TOOLS).toContain("searchFiles(pattern)");
+    expect(SYSTEM_PROMPT_WITH_TOOLS).toContain("grepFiles(query, glob?)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildTurn2PromptWithTools
+// ---------------------------------------------------------------------------
+
+describe("buildTurn2PromptWithTools", () => {
+  it("references the component file path and asks to call readFile", () => {
+    const prompt = buildTurn2PromptWithTools(
+      "screen_home",
+      "src/app/home.tsx",
+      "nextjs-app",
+    );
+    expect(prompt).toContain("screen_home");
+    expect(prompt).toContain("src/app/home.tsx");
+    expect(prompt).toContain("readFile");
+  });
+
+  it("does NOT embed raw component source", () => {
+    const prompt = buildTurn2PromptWithTools(
+      "screen_home",
+      "src/app/home.tsx",
+      "nextjs-app",
+    );
+    // The tool-based variant must NOT include a ``` fenced code block with source.
+    expect(prompt).not.toMatch(/```[\s\S]+export default/);
+  });
+
+  it("contains framework-specific look-for items for React Native", () => {
+    const prompt = buildTurn2PromptWithTools(
+      "screen_home",
+      "src/screens/HomeScreen.tsx",
+      "react-navigation",
+    );
+    expect(prompt).toContain("ActivityIndicator");
+  });
+
+  it("contains framework-specific look-for items for Flutter", () => {
+    const prompt = buildTurn2PromptWithTools(
+      "screen_home",
+      "lib/screens/home_screen.dart",
+      "flutter-go-router",
+    );
+    expect(prompt).toContain("CircularProgressIndicator");
+  });
+
+  it("contains framework-specific look-for items for iOS", () => {
+    const prompt = buildTurn2PromptWithTools(
+      "screen_home",
+      "Sources/Views/HomeView.swift",
+      "ios-swiftui",
+    );
+    expect(prompt).toContain("ProgressView");
+  });
+
+  it("contains framework-specific look-for items for Android", () => {
+    const prompt = buildTurn2PromptWithTools(
+      "screen_home",
+      "app/src/main/java/com/example/HomeFragment.kt",
+      "android-compose-navigation",
+    );
+    expect(prompt).toContain("ProgressBar");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildTurn3PromptWithTools
+// ---------------------------------------------------------------------------
+
+describe("buildTurn3PromptWithTools", () => {
+  const screens = [
+    { id: "screen_home", path: "/", componentFile: "src/app/home.tsx" },
+    { id: "screen_login", path: "/login", componentFile: "src/app/login.tsx" },
+  ];
+  const candidates = ["src/app/home.tsx", "src/app/login.tsx"];
+
+  it("lists known screens and candidate files", () => {
+    const prompt = buildTurn3PromptWithTools(screens, candidates, "nextjs-app");
+    expect(prompt).toContain("screen_home");
+    expect(prompt).toContain("screen_login");
+    expect(prompt).toContain("src/app/home.tsx");
+    expect(prompt).toContain("src/app/login.tsx");
+  });
+
+  it("instructs the model to use readFile and grepFiles", () => {
+    const prompt = buildTurn3PromptWithTools(screens, candidates, "nextjs-app");
+    expect(prompt).toContain("readFile");
+    expect(prompt).toContain("grepFiles");
+  });
+
+  it("does NOT embed file contents", () => {
+    const prompt = buildTurn3PromptWithTools(screens, candidates, "nextjs-app");
+    // Must not include fenced code blocks with embedded source.
+    expect(prompt).not.toMatch(/```[\s\S]{100,}/);
+  });
+
+  it("contains framework-specific look-for items for React Native", () => {
+    const prompt = buildTurn3PromptWithTools(
+      screens,
+      candidates,
+      "react-navigation",
+    );
+    expect(prompt).toContain("navigation.navigate");
+  });
+
+  it("contains framework-specific look-for items for Flutter", () => {
+    const prompt = buildTurn3PromptWithTools(
+      screens,
+      candidates,
+      "flutter-go-router",
+    );
+    expect(prompt).toContain("Navigator.push");
   });
 });

@@ -170,13 +170,20 @@ describe("custom-tools", () => {
         INVOCATION,
       );
 
-      expect(result).toBe("Error: File not found: does/not/exist.ts");
+      expect(result).toBe("Error: File not found.");
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("rejects arguments missing the path field", async () => {
       const [readFile] = createCustomTools(BASE_OPTIONS);
       const result = await readFile.handler({}, INVOCATION);
+      expect(typeof result).toBe("string");
+      expect(result as string).toMatch(/path/i);
+    });
+
+    it("rejects empty string path", async () => {
+      const [readFile] = createCustomTools(BASE_OPTIONS);
+      const result = await readFile.handler({ path: "" }, INVOCATION);
       expect(typeof result).toBe("string");
       expect(result as string).toMatch(/path/i);
     });
@@ -409,6 +416,29 @@ describe("custom-tools", () => {
       const result = await grepFiles.handler({}, INVOCATION);
       expect(result as string).toMatch(/query/i);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects non-object arguments", async () => {
+      const [, , grepFiles] = createCustomTools(BASE_OPTIONS);
+      const result = await grepFiles.handler("oops" as unknown, INVOCATION);
+      expect(result).toBe("Error: invalid arguments.");
+    });
+
+    it("returns a marker when glob filters all API results to zero matches", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockFetchResponse({
+          total_count: 2,
+          incomplete_results: false,
+          items: [{ path: "src/app/home.tsx" }, { path: "README.md" }],
+        }),
+      );
+
+      const [, , grepFiles] = createCustomTools(BASE_OPTIONS);
+      const result = await grepFiles.handler(
+        { query: "hello", glob: "**/*.py" },
+        INVOCATION,
+      );
+      expect(result).toBe("(no matches)");
     });
 
     it("strips injected repo: qualifiers from the query to prevent scope bypass", async () => {
