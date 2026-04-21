@@ -26,8 +26,16 @@ export const SYSTEM_PROMPT = `You are a source code analysis assistant.
 You analyze source code and extract structured information about screens,
 state variations, and navigation transitions.
 
-IMPORTANT: Always respond with ONLY valid JSON — no markdown fences, no
-explanatory text before or after the JSON.`;
+You have access to three tools for exploring the repository on demand. Use them
+to fetch only the files you need — do NOT ask the user to paste file contents:
+- readFile(path): fetch the full contents of a single file by repo-relative path.
+- searchFiles(pattern): list files whose paths match a glob (e.g. "src/**/*.tsx").
+- grepFiles(query, glob?): search the code for a literal identifier or string.
+
+Call these tools as many times as needed before producing your final answer.
+IMPORTANT: Your FINAL message must contain ONLY valid JSON — no markdown fences,
+no explanatory text before or after. Tool-invocation turns are not final answers;
+only the last message that does not invoke a tool is parsed as JSON.`;
 
 // ---------------------------------------------------------------------------
 // Turn 1 — Route / screen extraction
@@ -35,11 +43,12 @@ explanatory text before or after the JSON.`;
 
 export function buildTurn1Prompt(
   framework: string,
-  routingFiles: { path: string; content: string }[],
+  routingFilePaths: string[],
 ): string {
-  const filesSection = routingFiles
-    .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join("\n\n");
+  const filesSection =
+    routingFilePaths.length > 0
+      ? routingFilePaths.map((p) => `- ${p}`).join("\n")
+      : "(none discovered)";
 
   const isPlainHtml = framework === "plain-html";
   const isAstro = isAstroFramework(framework);
@@ -226,6 +235,14 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
 
   return `${frameworkInstructions}
 
+The following routing-definition files exist in the repository. Use the
+\`readFile\` tool to inspect the ones you need (you may read all of them if
+the list is short). Use \`searchFiles\` / \`grepFiles\` to discover additional
+routing-related files if the list below is incomplete.
+
+Routing files:
+${filesSection}
+
 For each screen return a JSON object with these fields:
 - "id": a unique snake_case identifier prefixed with "screen_" (e.g. "screen_dashboard")
 - "path": the URL route path (e.g. "/dashboard")
@@ -242,9 +259,7 @@ Return a JSON array of screen objects. Example:
     "label": "Home",
     "description": "Landing page of the application"
   }
-]
-
-${filesSection}`;
+]`;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +269,6 @@ ${filesSection}`;
 export function buildTurn2Prompt(
   screenId: string,
   componentFile: string,
-  componentSource: string,
   framework: FrameworkName,
 ): string {
   const isAstro = isAstroFramework(framework);
@@ -324,7 +338,13 @@ export function buildTurn2Prompt(
 - Other conditional rendering (feature flags, A/B tests)`;
   }
 
-  return `Analyze the following component source code for screen "${screenId}" and extract all state variants.
+  return `Analyze the component source for screen "${screenId}" and extract all state variants.
+
+The component is located at: ${componentFile}
+Use the \`readFile\` tool to fetch that file before analysing. If the component
+imports or delegates to other files (e.g. sub-components, hooks) and you need
+their contents to classify a variant, use \`readFile\` / \`searchFiles\` to
+inspect them as well.
 
 Look for:
 ${lookForItems}
@@ -335,12 +355,7 @@ For each variant return:
 - "condition": description of when this variant appears
 - "type": one of "loading" | "error" | "empty" | "auth_required" | "permission" | "responsive" | "conditional"
 
-Return a JSON array. If no variants are found, return an empty array [].
-
-### File: ${componentFile}
-\`\`\`
-${componentSource}
-\`\`\``;
+Return a JSON array. If no variants are found, return an empty array [].`;
 }
 
 // ---------------------------------------------------------------------------
@@ -520,24 +535,15 @@ export function extractRelevantSnippets(
 
 export function buildTurn3Prompt(
   screens: { id: string; path: string }[],
-  allComponentSources: { path: string; content: string }[],
+  componentFilePaths: string[],
   framework: FrameworkName,
 ): string {
   const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
 
-  // Extract only navigation-relevant snippets to reduce token usage
-  const navPatterns = getNavigationPatterns(framework);
-  const snippetFiles: { path: string; content: string }[] = [];
-  for (const f of allComponentSources) {
-    const snippet = extractRelevantSnippets(f.content, navPatterns);
-    if (snippet !== null) {
-      snippetFiles.push({ path: f.path, content: snippet });
-    }
-  }
-
-  const filesSection = snippetFiles
-    .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join("\n\n");
+  const filesSection =
+    componentFilePaths.length > 0
+      ? componentFilePaths.map((p) => `- ${p}`).join("\n")
+      : "(no candidate component files)";
 
   const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
@@ -661,10 +667,20 @@ export function buildTurn3Prompt(
                       ? `"LinkTo", "transitionTo", "replaceWith", "router.transitionTo"`
                       : `"Link", "router.push", "window.location"`;
 
-  return `Analyze the following component source code excerpts (showing only navigation-related sections) and extract all screen-to-screen transitions (navigations).
+  return `Analyze the repository's component source code and extract all screen-to-screen transitions (navigations).
 
 Known screens:
 ${screenList}
+
+Candidate component files:
+${filesSection}
+
+Strategy for exploring the code:
+1. Use \`grepFiles\` to locate navigation call-sites quickly — e.g. search for
+   the method names that matter for this framework.
+2. For each candidate file, use \`readFile\` to inspect the surrounding code.
+3. Use \`searchFiles\` to broaden your search if the candidate list seems
+   incomplete (e.g. custom route helpers in a \`utils/\` directory).
 
 Look for:
 ${lookForItems}
@@ -678,7 +694,5 @@ For each transition return:
 - "condition": (optional) any condition that must be true for the transition to occur
 
 Only include transitions between the known screens listed above.
-Return a JSON array. If no transitions are found, return an empty array [].
-
-${filesSection}`;
+Return a JSON array. If no transitions are found, return an empty array [].`;
 }

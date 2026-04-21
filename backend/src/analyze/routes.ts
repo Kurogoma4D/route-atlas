@@ -390,13 +390,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     });
 
     const routingEntries = filterFilesByPatterns(allFiles, routingFilePatterns);
-    const routingFiles = await fetchFileContents(
-      owner,
-      repo,
-      routingEntries,
-      token,
-      { maxFiles: 50 },
-    );
+    const routingFilePaths = routingEntries.slice(0, 50).map((e) => e.path);
 
     // Fetch component files -- file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
@@ -446,21 +440,17 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    const componentFiles = await fetchFileContents(
-      owner,
-      repo,
-      componentEntries,
-      token,
-      { maxFiles: 50 },
-    );
+    const componentFilePaths = componentEntries.map((e) => e.path);
 
-    // Send file count metadata
+    // Send file count metadata.
+    // With tool-driven file exploration we no longer pre-fetch file contents;
+    // the LLM reads only the files it needs via `readFile`.
     await jobStore.sendProgress(jobId, {
       step: "fetching_files",
       message: "ファイルを取得しました",
       metadata: {
-        routingFileCount: routingFiles.length,
-        componentFileCount: componentFiles.length,
+        routingFileCount: routingFilePaths.length,
+        componentFileCount: componentFilePaths.length,
       },
     });
 
@@ -475,8 +465,15 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
     const result = await pipeline.run({
       framework,
-      routingFiles,
-      componentFiles,
+      routingFilePaths,
+      componentFilePaths,
+      repositoryContext: {
+        owner,
+        repo,
+        ref: branch,
+        token,
+        fileTree: allFiles,
+      },
       model,
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {

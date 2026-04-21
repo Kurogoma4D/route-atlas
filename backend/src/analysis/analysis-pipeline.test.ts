@@ -4,8 +4,11 @@ import {
   isSupportedModel,
   DEFAULT_MODEL,
   SUPPORTED_MODELS,
+  type AnalysisPipelineInput,
 } from "./analysis-pipeline.js";
 import type { LLMAdapter, ChatCompletionOptions } from "./copilot-client.js";
+import type { RepositoryContext } from "./custom-tools.js";
+import type { TreeEntry } from "./github-file-fetcher.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -34,47 +37,47 @@ function createMockAdapter(
 // Sample data
 // ---------------------------------------------------------------------------
 
-const SAMPLE_ROUTING_FILE = {
-  path: "src/app/routes.ts",
-  content: `
-import { Route } from '@angular/router';
-export const routes: Route[] = [
-  { path: '', component: HomeComponent },
-  { path: 'dashboard', component: DashboardComponent },
-  { path: 'login', component: LoginComponent },
+const SAMPLE_ROUTING_FILE_PATH = "src/app/routes.ts";
+
+const SAMPLE_COMPONENT_FILE_PATHS = [
+  "src/app/home.component.ts",
+  "src/app/dashboard.component.ts",
+  "src/app/login.component.ts",
 ];
-`,
+
+function makeTreeEntry(path: string): TreeEntry {
+  return {
+    path,
+    mode: "100644",
+    type: "blob",
+    sha: `sha_${path}`,
+    size: 100,
+    url: `https://api.github.com/repos/owner/repo/git/blobs/sha_${path}`,
+  };
+}
+
+const SAMPLE_REPOSITORY_CONTEXT: RepositoryContext = {
+  owner: "owner",
+  repo: "repo",
+  ref: "main",
+  token: "token",
+  fileTree: [
+    makeTreeEntry(SAMPLE_ROUTING_FILE_PATH),
+    ...SAMPLE_COMPONENT_FILE_PATHS.map(makeTreeEntry),
+  ],
 };
 
-const SAMPLE_COMPONENT_FILES = [
-  {
-    path: "src/app/home.component.ts",
-    content: `
-@Component({ template: '<div *ngIf="loading">Loading...</div><div *ngIf="!loading">Home</div>' })
-export class HomeComponent {
-  loading = true;
+function baseInput(
+  overrides: Partial<AnalysisPipelineInput> = {},
+): AnalysisPipelineInput {
+  return {
+    framework: "angular",
+    routingFilePaths: [SAMPLE_ROUTING_FILE_PATH],
+    componentFilePaths: SAMPLE_COMPONENT_FILE_PATHS,
+    repositoryContext: SAMPLE_REPOSITORY_CONTEXT,
+    ...overrides,
+  };
 }
-`,
-  },
-  {
-    path: "src/app/dashboard.component.ts",
-    content: `
-@Component({ template: '<div *ngIf="error">Error!</div><div>Dashboard</div>' })
-export class DashboardComponent {
-  error = false;
-}
-`,
-  },
-  {
-    path: "src/app/login.component.ts",
-    content: `
-@Component({ template: '<form (submit)="onLogin()">Login</form>' })
-export class LoginComponent {
-  onLogin() { this.router.navigate(['/dashboard']); }
-}
-`,
-  },
-];
 
 // LLM mock responses
 const TURN1_RESPONSE = JSON.stringify([
@@ -151,11 +154,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("runs all three turns and returns a valid AnalysisResult", async () => {
-    const result = await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-    });
+    const result = await pipeline.run(baseInput());
 
     expect(result.framework).toBe("angular");
     expect(result.screens).toHaveLength(3);
@@ -163,11 +162,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("Turn 1 extracts all screens", async () => {
-    const result = await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-    });
+    const result = await pipeline.run(baseInput());
 
     const ids = result.screens.map((s) => s.id);
     expect(ids).toContain("screen_home");
@@ -176,11 +171,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("Turn 2 attaches variants to the correct screens", async () => {
-    const result = await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-    });
+    const result = await pipeline.run(baseInput());
 
     const home = result.screens.find((s) => s.id === "screen_home")!;
     expect(home.variants).toHaveLength(1);
@@ -195,11 +186,7 @@ describe("AnalysisPipeline", () => {
   });
 
   it("Turn 3 extracts transitions", async () => {
-    const result = await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-    });
+    const result = await pipeline.run(baseInput());
 
     expect(result.transitions).toHaveLength(1);
     expect(result.transitions[0]).toMatchObject({
@@ -211,24 +198,19 @@ describe("AnalysisPipeline", () => {
 
   it("calls onProgress callback between turns", async () => {
     const stages: string[] = [];
-    await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-      onProgress: (stage) => {
-        stages.push(stage);
-      },
-    });
+    await pipeline.run(
+      baseInput({
+        onProgress: (stage) => {
+          stages.push(stage);
+        },
+      }),
+    );
 
     expect(stages).toEqual(["analyzing_variants", "analyzing_transitions"]);
   });
 
   it("uses the default model when none specified", async () => {
-    await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-    });
+    await pipeline.run(baseInput());
 
     // All calls should use the default model
     for (const call of adapter.calls) {
@@ -237,15 +219,22 @@ describe("AnalysisPipeline", () => {
   });
 
   it("respects a custom model parameter", async () => {
-    await pipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-      model: "claude-sonnet-4",
-    });
+    await pipeline.run(baseInput({ model: "claude-sonnet-4" }));
 
     for (const call of adapter.calls) {
       expect(call.model).toBe("claude-sonnet-4");
+    }
+  });
+
+  it("forwards custom tools to every chat completion call", async () => {
+    await pipeline.run(baseInput());
+
+    for (const call of adapter.calls) {
+      expect(call.tools).toBeDefined();
+      const names = call.tools?.map((t) => t.name) ?? [];
+      expect(names).toContain("readFile");
+      expect(names).toContain("searchFiles");
+      expect(names).toContain("grepFiles");
     }
   });
 
@@ -259,16 +248,12 @@ describe("AnalysisPipeline", () => {
     ]);
     const fencedPipeline = new AnalysisPipeline(fencedAdapter);
 
-    const result = await fencedPipeline.run({
-      framework: "angular",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
-    });
+    const result = await fencedPipeline.run(baseInput());
 
     expect(result.screens).toHaveLength(3);
   });
 
-  it("assigns empty variants when component source is not found", async () => {
+  it("assigns empty variants when the component file is not in the tree", async () => {
     const adapterWithMissing = createMockAdapter([
       JSON.stringify([
         {
@@ -276,7 +261,7 @@ describe("AnalysisPipeline", () => {
           path: "/missing",
           componentFile: "src/app/does-not-exist.ts",
           label: "Missing",
-          description: "Component file not in input",
+          description: "Component file not in tree",
         },
       ]),
       // No Turn 2 call for this screen since source is missing
@@ -284,11 +269,13 @@ describe("AnalysisPipeline", () => {
     ]);
     const missingPipeline = new AnalysisPipeline(adapterWithMissing);
 
-    const result = await missingPipeline.run({
-      framework: "react-router",
-      routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: [], // no component files provided
-    });
+    const result = await missingPipeline.run(
+      baseInput({
+        framework: "react-router",
+        // Empty component path list — unknown components trigger the skip branch.
+        componentFilePaths: [],
+      }),
+    );
 
     expect(result.screens[0]!.variants).toEqual([]);
   });
@@ -297,26 +284,16 @@ describe("AnalysisPipeline", () => {
     const badAdapter = createMockAdapter(["This is not JSON at all, sorry!"]);
     const badPipeline = new AnalysisPipeline(badAdapter);
 
-    await expect(
-      badPipeline.run({
-        framework: "angular",
-        routingFiles: [SAMPLE_ROUTING_FILE],
-        componentFiles: SAMPLE_COMPONENT_FILES,
-      }),
-    ).rejects.toThrow(); // SyntaxError from JSON.parse
+    await expect(badPipeline.run(baseInput())).rejects.toThrow(); // SyntaxError from JSON.parse
   });
 
   it("throws when LLM returns valid JSON but wrong shape (object instead of array)", async () => {
     const badAdapter = createMockAdapter([JSON.stringify({ not: "an array" })]);
     const badPipeline = new AnalysisPipeline(badAdapter);
 
-    await expect(
-      badPipeline.run({
-        framework: "angular",
-        routingFiles: [SAMPLE_ROUTING_FILE],
-        componentFiles: SAMPLE_COMPONENT_FILES,
-      }),
-    ).rejects.toThrow("failed runtime validation");
+    await expect(badPipeline.run(baseInput())).rejects.toThrow(
+      "failed runtime validation",
+    );
   });
 
   it("propagates LLM errors", async () => {
@@ -328,13 +305,9 @@ describe("AnalysisPipeline", () => {
     };
     const errorPipeline = new AnalysisPipeline(errorAdapter);
 
-    await expect(
-      errorPipeline.run({
-        framework: "angular",
-        routingFiles: [SAMPLE_ROUTING_FILE],
-        componentFiles: SAMPLE_COMPONENT_FILES,
-      }),
-    ).rejects.toThrow("Copilot API unavailable");
+    await expect(errorPipeline.run(baseInput())).rejects.toThrow(
+      "Copilot API unavailable",
+    );
   });
 });
 

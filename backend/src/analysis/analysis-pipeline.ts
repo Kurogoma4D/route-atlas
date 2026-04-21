@@ -17,6 +17,7 @@ import type {
 } from "@route-atlas/shared";
 import type { LLMAdapter, ChatMessage } from "./copilot-client.js";
 import type { FrameworkName } from "./framework-detector.js";
+import { createCustomTools, type RepositoryContext } from "./custom-tools.js";
 import {
   SYSTEM_PROMPT,
   buildTurn1Prompt,
@@ -63,14 +64,18 @@ export interface AnalysisPipelineInput {
   /** Detected framework name (e.g. "nextjs-app", "react-router"). */
   framework: FrameworkName;
 
-  /** Routing definition files with their contents. */
-  routingFiles: { path: string; content: string }[];
+  /** Repo-relative paths of detected routing-definition files. */
+  routingFilePaths: string[];
+
+  /** Repo-relative paths of candidate component source files. */
+  componentFilePaths: string[];
 
   /**
-   * All component source files that may be referenced by routes.
-   * Keyed by file path so Turn 2 can look up individual components.
+   * GitHub repository context used to back the custom file-exploration tools.
+   * When provided, Copilot can call `readFile` / `searchFiles` / `grepFiles`
+   * to fetch files on demand instead of receiving them pre-embedded.
    */
-  componentFiles: { path: string; content: string }[];
+  repositoryContext: RepositoryContext;
 
   /** Which LLM model to use. Defaults to gpt-4.1. */
   model?: SupportedModel;
@@ -138,6 +143,11 @@ export class AnalysisPipeline {
    */
   async run(input: AnalysisPipelineInput): Promise<AnalysisResult> {
     const model = input.model ?? DEFAULT_MODEL;
+    // Build the custom toolset once per run — all turns share the same tools
+    // and the same repository context.
+    const tools = createCustomTools(input.repositoryContext);
+    const componentPathSet = new Set(input.componentFilePaths);
+
     const conversationHistory: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
     ];
@@ -145,12 +155,16 @@ export class AnalysisPipeline {
     // ------------------------------------------------------------------
     // Turn 1 — extract screens
     // ------------------------------------------------------------------
-    const turn1Prompt = buildTurn1Prompt(input.framework, input.routingFiles);
+    const turn1Prompt = buildTurn1Prompt(
+      input.framework,
+      input.routingFilePaths,
+    );
     conversationHistory.push({ role: "user", content: turn1Prompt });
 
     const turn1Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
+      tools,
     });
 
     conversationHistory.push({
@@ -177,30 +191,36 @@ export class AnalysisPipeline {
     // ------------------------------------------------------------------
     const TURN2_BATCH_SIZE = 5;
 
+    const framework = input.framework;
+    const pipelineTools = tools;
+
     async function extractVariants(
       adapter: LLMAdapter,
       rawScreen: RawScreen,
-      componentFiles: { path: string; content: string }[],
+      knownComponentPaths: Set<string>,
       baseMessages: ChatMessage[],
       selectedModel: string,
     ): Promise<Screen> {
-      const componentSource = componentFiles.find(
-        (f) => f.path === rawScreen.componentFile,
-      );
-
       let variants: Variant[] = [];
 
-      if (componentSource) {
+      // Only issue a Turn 2 call when the LLM identified a component file.
+      // If the component path is entirely unknown to the file tree we skip
+      // the turn — mirroring the previous behaviour of returning empty
+      // variants when no source was available.
+      if (
+        rawScreen.componentFile &&
+        knownComponentPaths.has(rawScreen.componentFile)
+      ) {
         const turn2Prompt = buildTurn2Prompt(
           rawScreen.id,
           rawScreen.componentFile,
-          componentSource.content,
-          input.framework,
+          framework,
         );
 
         const turn2Response = await adapter.chatCompletion({
           model: selectedModel,
           messages: [...baseMessages, { role: "user", content: turn2Prompt }],
+          tools: pipelineTools,
         });
 
         variants = parseLLMJson<Variant[]>(turn2Response.content, isArray);
@@ -219,7 +239,7 @@ export class AnalysisPipeline {
           extractVariants(
             this.adapter,
             screen,
-            input.componentFiles,
+            componentPathSet,
             turn1Context,
             model,
           ),
@@ -241,7 +261,7 @@ export class AnalysisPipeline {
 
     const turn3Prompt = buildTurn3Prompt(
       screenSummary,
-      input.componentFiles,
+      input.componentFilePaths,
       input.framework,
     );
     conversationHistory.push({ role: "user", content: turn3Prompt });
@@ -249,6 +269,7 @@ export class AnalysisPipeline {
     const turn3Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
+      tools,
     });
 
     const transitions = parseLLMJson<Transition[]>(
