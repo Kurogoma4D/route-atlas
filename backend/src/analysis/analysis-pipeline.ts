@@ -19,10 +19,15 @@ import type { LLMAdapter, ChatMessage } from "./copilot-client.js";
 import type { FrameworkName } from "./framework-detector.js";
 import {
   SYSTEM_PROMPT,
+  SYSTEM_PROMPT_WITH_TOOLS,
   buildTurn1Prompt,
   buildTurn2Prompt,
   buildTurn3Prompt,
+  buildTurn1ToolPrompt,
+  buildTurn2ToolPrompt,
+  buildTurn3ToolPrompt,
 } from "./prompts.js";
+import { buildRepoTools, type RepoContext } from "./copilot-tools.js";
 
 // ---------------------------------------------------------------------------
 // Supported models (per SPEC.md §3)
@@ -77,6 +82,15 @@ export interface AnalysisPipelineInput {
 
   /** Optional callback invoked between pipeline turns to report real progress. */
   onProgress?: OnPipelineProgress;
+
+  /**
+   * When provided, the pipeline switches to the "tool-delegated" flow: custom
+   * Copilot tools (readFile, searchFiles, grepFiles) are registered with the
+   * session, prompts contain only file *lists* (not full contents), and the
+   * model is expected to fetch whatever it needs via the tools. When omitted,
+   * the pipeline falls back to embedding full file contents in each prompt.
+   */
+  repoContext?: RepoContext;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,19 +152,29 @@ export class AnalysisPipeline {
    */
   async run(input: AnalysisPipelineInput): Promise<AnalysisResult> {
     const model = input.model ?? DEFAULT_MODEL;
+    const useTools = input.repoContext !== undefined;
+    const tools = useTools ? buildRepoTools(input.repoContext!) : undefined;
+
+    const systemPrompt = useTools ? SYSTEM_PROMPT_WITH_TOOLS : SYSTEM_PROMPT;
     const conversationHistory: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
     ];
 
     // ------------------------------------------------------------------
     // Turn 1 — extract screens
     // ------------------------------------------------------------------
-    const turn1Prompt = buildTurn1Prompt(input.framework, input.routingFiles);
+    const turn1Prompt = useTools
+      ? buildTurn1ToolPrompt(
+          input.framework,
+          input.routingFiles.map((f) => f.path),
+        )
+      : buildTurn1Prompt(input.framework, input.routingFiles);
     conversationHistory.push({ role: "user", content: turn1Prompt });
 
     const turn1Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
+      tools,
     });
 
     conversationHistory.push({
@@ -176,34 +200,52 @@ export class AnalysisPipeline {
     // Turn 3 (the screen list is passed explicitly).
     // ------------------------------------------------------------------
     const TURN2_BATCH_SIZE = 5;
+    const framework = input.framework;
+    const componentFiles = input.componentFiles;
 
     async function extractVariants(
       adapter: LLMAdapter,
       rawScreen: RawScreen,
-      componentFiles: { path: string; content: string }[],
       baseMessages: ChatMessage[],
       selectedModel: string,
     ): Promise<Screen> {
-      const componentSource = componentFiles.find(
-        (f) => f.path === rawScreen.componentFile,
-      );
-
       let variants: Variant[] = [];
 
-      if (componentSource) {
-        const turn2Prompt = buildTurn2Prompt(
+      if (useTools) {
+        // In tool mode the model fetches the file itself — always issue a
+        // turn and let the model read the component via readFile.
+        const turn2Prompt = buildTurn2ToolPrompt(
           rawScreen.id,
           rawScreen.componentFile,
-          componentSource.content,
-          input.framework,
         );
 
         const turn2Response = await adapter.chatCompletion({
           model: selectedModel,
           messages: [...baseMessages, { role: "user", content: turn2Prompt }],
+          tools,
         });
 
         variants = parseLLMJson<Variant[]>(turn2Response.content, isArray);
+      } else {
+        const componentSource = componentFiles.find(
+          (f) => f.path === rawScreen.componentFile,
+        );
+
+        if (componentSource) {
+          const turn2Prompt = buildTurn2Prompt(
+            rawScreen.id,
+            rawScreen.componentFile,
+            componentSource.content,
+            framework,
+          );
+
+          const turn2Response = await adapter.chatCompletion({
+            model: selectedModel,
+            messages: [...baseMessages, { role: "user", content: turn2Prompt }],
+          });
+
+          variants = parseLLMJson<Variant[]>(turn2Response.content, isArray);
+        }
       }
 
       return { ...rawScreen, variants };
@@ -216,13 +258,7 @@ export class AnalysisPipeline {
       const batch = rawScreens.slice(i, i + TURN2_BATCH_SIZE);
       const batchResults = await Promise.all(
         batch.map((screen) =>
-          extractVariants(
-            this.adapter,
-            screen,
-            input.componentFiles,
-            turn1Context,
-            model,
-          ),
+          extractVariants(this.adapter, screen, turn1Context, model),
         ),
       );
       screensWithVariants.push(...batchResults);
@@ -239,16 +275,19 @@ export class AnalysisPipeline {
       path: s.path,
     }));
 
-    const turn3Prompt = buildTurn3Prompt(
-      screenSummary,
-      input.componentFiles,
-      input.framework,
-    );
+    const turn3Prompt = useTools
+      ? buildTurn3ToolPrompt(
+          screenSummary,
+          input.componentFiles.map((f) => f.path),
+          framework,
+        )
+      : buildTurn3Prompt(screenSummary, input.componentFiles, framework);
     conversationHistory.push({ role: "user", content: turn3Prompt });
 
     const turn3Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
+      tools,
     });
 
     const transitions = parseLLMJson<Transition[]>(
@@ -257,7 +296,7 @@ export class AnalysisPipeline {
     );
 
     return {
-      framework: input.framework,
+      framework,
       screens: screensWithVariants,
       transitions,
     };

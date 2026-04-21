@@ -354,3 +354,106 @@ describe("isSupportedModel", () => {
     expect(isSupportedModel("")).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Tool-delegated (repoContext) flow
+// ---------------------------------------------------------------------------
+
+describe("AnalysisPipeline with repoContext (tool-delegated flow)", () => {
+  it("registers custom tools on every adapter call and omits file contents from prompts", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      repoContext: {
+        owner: "acme",
+        repo: "widgets",
+        branch: "main",
+        token: "t",
+        treeFiles: [],
+      },
+    });
+
+    expect(adapter.calls.length).toBeGreaterThan(0);
+
+    for (const call of adapter.calls) {
+      // Tools must be attached
+      expect(call.tools).toBeDefined();
+      const toolNames = (call.tools ?? []).map((t) => t.name).sort();
+      expect(toolNames).toEqual(["grepFiles", "readFile", "searchFiles"]);
+
+      // Prompts must NOT contain the routing file's raw source code
+      const lastUser = call.messages[call.messages.length - 1];
+      expect(lastUser.content).not.toContain("HomeComponent");
+      expect(lastUser.content).not.toContain("@angular/router");
+    }
+  });
+
+  it("uses the tool-aware system prompt", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      repoContext: {
+        owner: "acme",
+        repo: "widgets",
+        branch: "main",
+        token: "t",
+        treeFiles: [],
+      },
+    });
+
+    const firstCall = adapter.calls[0]!;
+    const systemMsg = firstCall.messages[0]!;
+    expect(systemMsg.role).toBe("system");
+    expect(systemMsg.content).toContain("readFile");
+    expect(systemMsg.content).toContain("searchFiles");
+    expect(systemMsg.content).toContain("grepFiles");
+  });
+
+  it("issues a Turn 2 call for every screen (even when component is not pre-fetched)", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    const result = await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: [], // no pre-fetched components — rely on tools
+      repoContext: {
+        owner: "acme",
+        repo: "widgets",
+        branch: "main",
+        token: "t",
+        treeFiles: [],
+      },
+    });
+
+    // 1 Turn1 + 3 Turn2 + 1 Turn3 = 5 calls
+    expect(adapter.calls.length).toBe(5);
+    expect(result.screens).toHaveLength(3);
+  });
+});

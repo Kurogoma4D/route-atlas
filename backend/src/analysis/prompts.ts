@@ -29,6 +29,28 @@ state variations, and navigation transitions.
 IMPORTANT: Always respond with ONLY valid JSON — no markdown fences, no
 explanatory text before or after the JSON.`;
 
+/**
+ * System prompt variant used when custom file-access tools (readFile,
+ * searchFiles, grepFiles) are available. Encourages the model to fetch only
+ * what it needs instead of expecting every relevant file to be embedded.
+ */
+export const SYSTEM_PROMPT_WITH_TOOLS = `You are a source code analysis assistant.
+You analyze source code and extract structured information about screens,
+state variations, and navigation transitions.
+
+You have access to custom tools for exploring the repository on demand:
+- readFile(path): fetch the contents of a single file by its repository-relative path.
+- searchFiles(pattern): list file paths matching a minimatch glob pattern.
+- grepFiles(query, glob?): find a literal substring across files (optionally scoped by a glob).
+
+Use these tools to read only the files you actually need. Do NOT request the
+same file more than once in a single turn. Prefer narrow globs over broad ones
+to keep tool responses small.
+
+IMPORTANT: After you have finished exploring, your FINAL response must be
+ONLY valid JSON — no markdown fences, no explanatory text before or after the
+JSON. Do not describe your reasoning in the final message.`;
+
 // ---------------------------------------------------------------------------
 // Turn 1 — Route / screen extraction
 // ---------------------------------------------------------------------------
@@ -681,4 +703,130 @@ Only include transitions between the known screens listed above.
 Return a JSON array. If no transitions are found, return an empty array [].
 
 ${filesSection}`;
+}
+
+// ---------------------------------------------------------------------------
+// Tool-based prompts (Turn N variants used when custom Copilot tools are
+// available). These provide a file list only and instruct the model to fetch
+// relevant files via readFile / searchFiles / grepFiles.
+// ---------------------------------------------------------------------------
+
+/** Cap the file list embedded in tool-based prompts to keep tokens bounded. */
+const TOOL_PROMPT_FILE_LIST_LIMIT = 500;
+
+/** Format a file path list for embedding in a tool-based prompt. */
+function formatFileList(
+  paths: string[],
+  limit = TOOL_PROMPT_FILE_LIST_LIMIT,
+): string {
+  const shown = paths.slice(0, limit);
+  const suffix =
+    paths.length > limit
+      ? `\n... (${paths.length - limit} more files omitted — use searchFiles with a narrower glob to discover them)`
+      : "";
+  return `${shown.join("\n")}${suffix}`;
+}
+
+/**
+ * Turn 1 prompt for the tool-enabled flow. Instead of embedding routing file
+ * contents, lists candidate routing file paths and instructs the model to
+ * read them via the `readFile` tool.
+ */
+export function buildTurn1ToolPrompt(
+  framework: FrameworkName,
+  routingFilePaths: string[],
+): string {
+  const fileList = formatFileList(routingFilePaths);
+
+  return `Identify every screen / route in this ${framework} project.
+
+The following files were detected as likely routing definitions:
+${fileList}
+
+Instructions:
+1. Call readFile on each routing file (or the most promising ones) to inspect its contents.
+2. If the routing definitions reference components in other files you need to verify, call readFile on those too. Use searchFiles / grepFiles to discover additional routing sources (e.g. nested route configs).
+3. Do NOT read the same file twice.
+4. Once you have enough information, return the final answer as a JSON array.
+
+For each screen return a JSON object with these fields:
+- "id": a unique snake_case identifier prefixed with "screen_" (e.g. "screen_dashboard")
+- "path": the URL route path (e.g. "/dashboard")
+- "componentFile": the component file path referenced in the route definition
+- "label": a short human-readable name for the screen
+- "description": a brief description of what the screen does
+
+Return a JSON array of screen objects. If no screens are found, return [].`;
+}
+
+/**
+ * Turn 2 prompt for the tool-enabled flow. Gives the model the target
+ * component file path and asks it to fetch + analyse it via readFile.
+ */
+export function buildTurn2ToolPrompt(
+  screenId: string,
+  componentFile: string,
+): string {
+  return `Analyze the state variants for screen "${screenId}".
+
+The component file is: ${componentFile}
+
+Instructions:
+1. Call readFile("${componentFile}") to retrieve the source.
+2. If the component imports other components you also need to inspect, call readFile on those.
+3. Identify all state variants (loading, error, empty, auth_required, permission, responsive, conditional).
+
+For each variant return:
+- "id": unique snake_case identifier (e.g. "variant_loading_dashboard")
+- "label": human-readable name (e.g. "Loading state")
+- "condition": description of when this variant appears
+- "type": one of "loading" | "error" | "empty" | "auth_required" | "permission" | "responsive" | "conditional"
+
+Return a JSON array. If no variants are found, return an empty array [].`;
+}
+
+/**
+ * Turn 3 prompt for the tool-enabled flow. Provides the list of known screens
+ * and the list of component file paths; asks the model to use grepFiles /
+ * readFile to locate navigation calls.
+ */
+export function buildTurn3ToolPrompt(
+  screens: { id: string; path: string }[],
+  componentFilePaths: string[],
+  framework: FrameworkName,
+): string {
+  const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
+  const fileList = formatFileList(componentFilePaths);
+
+  // Re-use the same pattern lists as the non-tool Turn 3 prompt so the
+  // model searches for the right keywords on this platform.
+  const patterns = getNavigationPatterns(framework)
+    .map((re) => `- ${re.source}`)
+    .join("\n");
+
+  return `Identify every screen-to-screen transition (navigation) in this ${framework} project.
+
+Known screens:
+${screenList}
+
+Component files in the repository:
+${fileList}
+
+Instructions:
+1. Use grepFiles with the following regex-like substrings to locate navigation call sites:
+${patterns}
+   (grepFiles performs LITERAL substring search — pick representative keywords such as "router.push", "Navigator.push", "navigate(", "href=".)
+2. For each hit, call readFile on the containing file to understand the "from" and "to" screens and the trigger.
+3. Only include transitions between the KNOWN screens listed above.
+4. Do NOT read the same file twice.
+
+For each transition return:
+- "id": unique snake_case identifier (e.g. "transition_home_to_login")
+- "from": the source screen id
+- "to": the target screen id
+- "trigger": description of what triggers the navigation (e.g. "Click login button")
+- "method": the code method used (e.g. "router.push", "Link", "Navigator.push")
+- "condition": (optional) any condition that must be true for the transition to occur
+
+Return a JSON array. If no transitions are found, return an empty array [].`;
 }

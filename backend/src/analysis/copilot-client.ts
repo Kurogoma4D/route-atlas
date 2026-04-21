@@ -8,7 +8,7 @@
  * Reference: SPEC.md §4.2, §8.2
  */
 
-import { CopilotClient, approveAll } from "@github/copilot-sdk";
+import { CopilotClient, approveAll, type Tool } from "@github/copilot-sdk";
 
 // ---------------------------------------------------------------------------
 // LLM Adapter interface — the abstraction boundary
@@ -25,6 +25,12 @@ export interface ChatCompletionOptions {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
+  /**
+   * Custom tools made available to the model for this call. When supplied,
+   * the model can invoke these tools (e.g. to fetch repository files on
+   * demand) rather than relying on content embedded in the prompt.
+   */
+  tools?: Tool[];
 }
 
 /** The response from an LLM chat completion call. */
@@ -98,6 +104,9 @@ class CopilotLLMAdapter implements LLMAdapter {
       prompt = lastUserMsg?.content ?? "";
     }
 
+    const customTools = options.tools ?? [];
+    const toolNames = customTools.map((t) => t.name);
+
     const session = await this.client.createSession({
       model: options.model,
       onPermissionRequest: approveAll,
@@ -105,8 +114,12 @@ class CopilotLLMAdapter implements LLMAdapter {
         mode: "replace",
         content: systemMsg,
       },
-      // Disable all built-in tools — we only need chat completion
-      availableTools: [],
+      // Register custom tools (if any) so the model can invoke them.
+      tools: customTools.length > 0 ? customTools : undefined,
+      // Restrict the model to ONLY the custom tools we registered. When no
+      // custom tools are supplied, fall back to disabling all built-ins —
+      // matching the prior "chat completion only" behaviour.
+      availableTools: toolNames,
     });
 
     try {

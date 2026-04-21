@@ -478,6 +478,16 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       routingFiles,
       componentFiles,
       model,
+      // Delegate file lookups to Copilot via custom tools — see Issue #90.
+      // The LLM pulls files on demand from the repo tree instead of relying
+      // on full contents embedded in each prompt.
+      repoContext: {
+        owner,
+        repo,
+        branch,
+        token,
+        treeFiles: allFiles,
+      },
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {
           void jobStore.sendProgress(jobId, {
