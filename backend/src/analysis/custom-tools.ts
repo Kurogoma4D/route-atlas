@@ -321,12 +321,14 @@ export async function grepFilesImpl(
   }
 
   const lines = response.items.map((item) => `- ${item.path}`);
+  const caveat =
+    "Results are from the default branch (may differ from the analyzed ref):";
   const header = `Code search for '${query}' found ${response.total_count} match(es); showing file paths for up to ${GREP_FILES_MAX_RESULTS}:`;
   const footer = response.incomplete_results
     ? "\n(GitHub reported partial results; narrow the query for completeness.)"
     : "";
 
-  return success(`${header}\n${lines.join("\n")}${footer}`);
+  return success(`${caveat}\n${header}\n${lines.join("\n")}${footer}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +407,7 @@ export function createCustomTools(context: RepositoryContext): Tool[] {
     {
       name: "grepFiles",
       description:
-        "Search the repository's source code for a literal string or identifier via the GitHub code-search API. Optionally restrict matches with a path glob. Returns a list of file paths containing the query. Use this to find usages (e.g. 'router.push') when you do not know which file contains them.",
+        "Search the repository's source code for a literal string or identifier via the GitHub code-search API. Optionally restrict matches with a path glob. Returns a list of file paths containing the query. Use this to find usages (e.g. 'router.push') when you do not know which file contains them. Note: searches the repository's default branch, which may differ from the ref being analyzed. Use `searchFiles` + `readFile` for ref-accurate discovery.",
       parameters: {
         type: "object",
         properties: {

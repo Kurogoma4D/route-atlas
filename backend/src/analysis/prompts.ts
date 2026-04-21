@@ -341,7 +341,7 @@ export function buildTurn2Prompt(
   return `Analyze the component source for screen "${screenId}" and extract all state variants.
 
 The component is located at: ${componentFile}
-Use the \`readFile\` tool to fetch that file before analysing. If the component
+Use the \`readFile\` tool to fetch that file before analyzing. If the component
 imports or delegates to other files (e.g. sub-components, hooks) and you need
 their contents to classify a variant, use \`readFile\` / \`searchFiles\` to
 inspect them as well.
