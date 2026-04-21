@@ -291,4 +291,22 @@ describe("buildTurn3PromptWithTools", () => {
     );
     expect(prompt).toContain("Navigator.push");
   });
+
+  it("contains framework-specific look-for items for iOS", () => {
+    const prompt = buildTurn3PromptWithTools(
+      screens,
+      candidates,
+      "ios-swiftui",
+    );
+    expect(prompt).toContain("NavigationLink");
+  });
+
+  it("contains framework-specific look-for items for Android", () => {
+    const prompt = buildTurn3PromptWithTools(
+      screens,
+      candidates,
+      "android-compose-navigation",
+    );
+    expect(prompt).toContain("NavController.navigate");
+  });
 });

@@ -264,6 +264,54 @@ describe("custom-tools", () => {
       // Network should be hit only once despite two calls.
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    it("blocks sensitive files and returns not-found without calling fetch", async () => {
+      const sensitiveFiles = [
+        ".env",
+        ".env.production",
+        "config/credentials.json",
+        "id_rsa",
+        "server.key",
+        "cert.pem",
+        "secrets/api_key.txt",
+      ];
+      const [readFile] = createCustomTools({
+        ...BASE_OPTIONS,
+        allFiles: [
+          ...BASE_OPTIONS.allFiles,
+          ...sensitiveFiles.map(makeEntry),
+        ],
+      });
+      for (const path of sensitiveFiles) {
+        const result = await readFile.handler({ path }, INVOCATION);
+        expect(result).toBe("Error: File not found.");
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("evicts failed promises from the cache so transient errors can be retried", async () => {
+      fetchMock
+        .mockResolvedValueOnce(mockFetchResponse({ message: "server error" }, 500))
+        .mockResolvedValueOnce(
+          mockFetchResponse({
+            name: "home.tsx",
+            path: "src/app/home.tsx",
+            sha: "abc",
+            size: 5,
+            type: "file",
+            content: base64("retry"),
+            encoding: "base64",
+          }),
+        );
+
+      const [readFile] = createCustomTools(BASE_OPTIONS);
+      const r1 = await readFile.handler({ path: "src/app/home.tsx" }, INVOCATION);
+      expect(r1).toContain("Error:");
+
+      const r2 = await readFile.handler({ path: "src/app/home.tsx" }, INVOCATION);
+      expect(r2).toBe("retry");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -317,6 +365,26 @@ describe("custom-tools", () => {
       const [, searchFiles] = createCustomTools(BASE_OPTIONS);
       await searchFiles.handler({ pattern: "**/*.ts" }, INVOCATION);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("excludes sensitive files from results", async () => {
+      const [, searchFiles] = createCustomTools({
+        ...BASE_OPTIONS,
+        allFiles: [
+          ...BASE_OPTIONS.allFiles,
+          makeEntry(".env"),
+          makeEntry("config/credentials.json"),
+          makeEntry("keys/id_rsa"),
+        ],
+      });
+      const result = (await searchFiles.handler(
+        { pattern: "**/*" },
+        INVOCATION,
+      )) as string;
+      const lines = result.split("\n");
+      expect(lines).not.toContain(".env");
+      expect(lines).not.toContain("config/credentials.json");
+      expect(lines).not.toContain("keys/id_rsa");
     });
   });
 
@@ -471,6 +539,56 @@ describe("custom-tools", () => {
       );
       expect(result as string).toContain("Error:");
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("caches repeated grepFiles calls for the same query", async () => {
+      fetchMock.mockResolvedValue(
+        mockFetchResponse({
+          total_count: 1,
+          incomplete_results: false,
+          items: [{ path: "src/app/home.tsx" }],
+        }),
+      );
+
+      const [, , grepFiles] = createCustomTools(BASE_OPTIONS);
+      const r1 = await grepFiles.handler({ query: "useNavigate" }, INVOCATION);
+      const r2 = await grepFiles.handler({ query: "useNavigate" }, INVOCATION);
+
+      expect(r1).toBe("src/app/home.tsx");
+      expect(r2).toBe("src/app/home.tsx");
+      // Network should be hit only once despite two identical queries.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("excludes sensitive file paths returned by the GitHub Search API", async () => {
+      fetchMock.mockResolvedValueOnce(
+        mockFetchResponse({
+          total_count: 3,
+          incomplete_results: false,
+          items: [
+            { path: "src/app/home.tsx" },
+            { path: ".env" },
+            { path: "config/credentials.json" },
+          ],
+        }),
+      );
+
+      const [, , grepFiles] = createCustomTools({
+        ...BASE_OPTIONS,
+        allFiles: [
+          ...BASE_OPTIONS.allFiles,
+          makeEntry(".env"),
+          makeEntry("config/credentials.json"),
+        ],
+      });
+      const result = (await grepFiles.handler(
+        { query: "API_KEY" },
+        INVOCATION,
+      )) as string;
+
+      expect(result).toBe("src/app/home.tsx");
+      expect(result).not.toContain(".env");
+      expect(result).not.toContain("credentials");
     });
   });
 });

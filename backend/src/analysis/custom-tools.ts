@@ -164,7 +164,7 @@ function truncate(content: string, max: number): string {
  * Response shape of `GET /search/code?q=...`.
  * Only the fields we actually consume are declared.
  */
-export interface SearchCodeResponse {
+interface SearchCodeResponse {
   total_count: number;
   incomplete_results: boolean;
   items: { path: string }[];
@@ -188,6 +188,7 @@ const SENSITIVE_PATH_RE: RegExp[] = [
   /credential/i,
   /secret/i,
   /private[_-]?key/i,
+  /^id_(rsa|dsa|ecdsa|ed25519)$/i,
 ];
 
 function isSensitivePath(filePath: string): boolean {
@@ -287,9 +288,9 @@ export function createCustomTools(
       const cachedSearch = searchCache.get(pattern);
       if (cachedSearch !== undefined) return cachedSearch;
 
-      for (const f of allFiles) {
-        if (minimatch(f.path, pattern)) {
-          matched.push(f.path);
+      for (const filePath of byPath.keys()) {
+        if (minimatch(filePath, pattern)) {
+          matched.push(filePath);
           if (matched.length >= maxSearchResults) break;
         }
       }
@@ -340,7 +341,9 @@ export function createCustomTools(
           const url = `https://api.github.com/search/code?q=${encodeURIComponent(q)}&per_page=${maxSearchResults}`;
           const data = await githubFetch<SearchCodeResponse>(url, token);
 
-          let paths = data.items.map((item) => item.path);
+          let paths = data.items
+            .map((item) => item.path)
+            .filter((p) => byPath.has(p));
           if (glob) {
             paths = paths.filter((p) => minimatch(p, glob));
           }
