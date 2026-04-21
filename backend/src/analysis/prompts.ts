@@ -442,6 +442,70 @@ export function getNavigationPatterns(framework: FrameworkName): RegExp[] {
   ];
 }
 
+function getNavigationQueryHints(framework: FrameworkName): string[] {
+  if (isReactNativeFramework(framework)) {
+    return [
+      "navigation.navigate",
+      "navigation.push",
+      "router.push",
+      "router.replace",
+      "<Link",
+    ];
+  }
+  if (isFlutterFramework(framework)) {
+    return [
+      "Navigator.push",
+      "Navigator.of(context).push",
+      "context.go",
+      "context.push",
+      "showDialog",
+    ];
+  }
+  if (isAndroidFramework(framework)) {
+    return [
+      "findNavController().navigate",
+      "navController.navigate",
+      "startActivity",
+      "popBackStack",
+      "app:destination",
+    ];
+  }
+  if (isIOSFramework(framework)) {
+    return [
+      "NavigationLink",
+      ".navigationDestination",
+      ".sheet(",
+      "pushViewController",
+      "performSegue",
+    ];
+  }
+  if (isAstroFramework(framework)) {
+    return [
+      "href=\"",
+      "Astro.redirect",
+      "window.location",
+      "location.href",
+      "data-astro-reload",
+    ];
+  }
+  if (isEmberFramework(framework)) {
+    return [
+      "LinkTo",
+      "transitionTo",
+      "replaceWith",
+      "router.transitionTo",
+      "href=\"",
+    ];
+  }
+  return [
+    "router.push",
+    "navigate(",
+    "redirect(",
+    "href=\"",
+    "window.location",
+  ];
+}
+
 /**
  * Extract only the lines relevant to navigation from a file's content.
  *
@@ -681,10 +745,10 @@ export function buildTurn3Prompt(
                       ? `"LinkTo", "transitionTo", "replaceWith", "router.transitionTo"`
                       : `"Link", "router.push", "window.location"`;
 
-  const navPatterns = getNavigationPatterns(framework);
-  const patternHints = navPatterns
+  const queryHints = getNavigationQueryHints(framework);
+  const patternHints = queryHints
     .slice(0, 8)
-    .map((re) => `  - ${re.source}`)
+    .map((query) => `  - ${query}`)
     .join("\n");
 
   return `Identify all screen-to-screen transitions (navigations) between the known screens below.

@@ -34,9 +34,6 @@ const MAX_TOOL_PAYLOAD_CHARS = 60_000;
 /** Maximum number of matches returned by `searchFiles` / `grepFiles`. */
 const MAX_SEARCH_RESULTS = 100;
 
-/** Maximum number of files we will scan inside a single `grepFiles` call. */
-const MAX_GREP_SCAN = 40;
-
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -247,12 +244,9 @@ export function createFileTools(
         return "Error: `query` is required and must be a string.";
       }
 
-      const candidates: TreeEntry[] = [];
-      for (const entry of context.files) {
-        if (glob && !minimatch(entry.path, glob)) continue;
-        candidates.push(entry);
-        if (candidates.length >= MAX_GREP_SCAN) break;
-      }
+      const candidates = context.files.filter(
+        (entry) => !glob || minimatch(entry.path, glob),
+      );
 
       if (candidates.length === 0) {
         return glob
@@ -271,8 +265,10 @@ export function createFileTools(
           if (err instanceof GitHubRateLimitError) {
             return formatError("Error during grep", err);
           }
-          // Skip unreadable files silently — grep should stay best-effort
-          continue;
+          if (err instanceof GitHubApiError && err.status === 404) {
+            continue;
+          }
+          return formatError("Error during grep", err);
         }
         const lines = content.split("\n");
         const hits: string[] = [];
@@ -294,10 +290,7 @@ export function createFileTools(
         return `No matches for '${query}'${scope} (scanned ${candidates.length} file(s)).`;
       }
 
-      const header =
-        candidates.length >= MAX_GREP_SCAN
-          ? `Scanned first ${MAX_GREP_SCAN} file(s)${glob ? ` matching '${glob}'` : ""}; ${totalMatches} match(es) across ${results.length} file(s):`
-          : `${totalMatches} match(es) for '${query}' across ${results.length} file(s):`;
+      const header = `${totalMatches} match(es) for '${query}' across ${results.length} file(s) (scanned ${candidates.length} file(s)):`;
       return truncate(`${header}\n\n${results.join("\n\n")}`);
     },
   });
