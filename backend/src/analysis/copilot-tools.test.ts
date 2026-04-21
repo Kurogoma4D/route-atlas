@@ -179,6 +179,25 @@ describe("handleReadFile", () => {
     expect(result.textResultForLlm).toContain("not found");
   });
 
+  it("does not double-prefix 'GitHub API error' wording on non-404 API errors", async () => {
+    // 500 → GitHubApiError whose .message already starts with
+    // "GitHub API error (500): ...". The tool failure text must NOT add a
+    // second "GitHub API error" prefix on top of that.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue(
+      mockResponse({ message: "Internal Server Error" }, 500),
+    );
+
+    const result = await handleReadFile(ctx, { path: "src/app/routes.ts" });
+    expect(result.resultType).toBe("failure");
+    // The contextual framing is present.
+    expect(result.textResultForLlm).toContain("Error while reading");
+    // The underlying message (which already contains the "GitHub API error"
+    // prefix) is included exactly once — never duplicated.
+    const occurrences = result.textResultForLlm.match(/GitHub API error/g);
+    expect(occurrences).not.toBeNull();
+    expect(occurrences!.length).toBe(1);
+  });
+
   it("truncates very large files", async () => {
     const large = "a".repeat(10_000);
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
@@ -199,7 +218,8 @@ describe("handleReadFile", () => {
       { maxBytes: 100 },
     );
     expect(result.resultType).toBe("success");
-    expect(result.textResultForLlm).toContain("bytes truncated");
+    expect(result.textResultForLlm).toContain("bytes omitted");
+    expect(result.textResultForLlm).toContain("[truncated:");
     expect(result.textResultForLlm.length).toBeLessThan(large.length);
   });
 
@@ -229,7 +249,8 @@ describe("handleReadFile", () => {
     expect(result.resultType).toBe("success");
     // 900 total bytes, head fits 100 chars × 3 bytes = 300 bytes,
     // so ~600 bytes should be reported as truncated.
-    expect(result.textResultForLlm).toMatch(/600 bytes truncated/);
+    expect(result.textResultForLlm).toMatch(/600 bytes omitted/);
+    expect(result.textResultForLlm).toContain("[truncated:");
     // And the head must not be split mid-codepoint.
     const headMatch = /^(あ+)/.exec(result.textResultForLlm);
     expect(headMatch).not.toBeNull();
@@ -259,7 +280,8 @@ describe("handleReadFile", () => {
     );
     expect(result.resultType).toBe("success");
     expect(result.textResultForLlm).toBe(ja);
-    expect(result.textResultForLlm).not.toContain("bytes truncated");
+    expect(result.textResultForLlm).not.toContain("bytes omitted");
+    expect(result.textResultForLlm).not.toContain("[truncated:");
   });
 
   it("fails on empty path", async () => {

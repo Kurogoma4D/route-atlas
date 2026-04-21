@@ -11,9 +11,10 @@
  *  - `searchFiles(pattern)` — list files whose paths match a glob pattern
  *  - `grepFiles(query, glob?)` — search inside files for a substring
  *
- * Tool handlers are pure adapters over the existing github-file-fetcher
- * module; rate-limit and file-not-found errors are surfaced to the model as
- * structured failure results so the model can recover / try alternatives.
+ * Tool handlers are adapters over the existing github-file-fetcher module.
+ * They return structured failure results where appropriate, but some
+ * operations are best-effort: e.g. search may return partial results with
+ * notes on truncation and may skip missing or unreadable files.
  */
 
 import { minimatch } from "minimatch";
@@ -102,9 +103,10 @@ function matchGlob(path: string, pattern: string): boolean {
  *
  * Iterates the string by Unicode characters (so we never split a multi-byte
  * codepoint mid-byte) and measures each character's UTF-8 width via
- * `Buffer.byteLength(char, "utf8")`. Reports the number of bytes dropped in
- * the trailing comment so the model sees an accurate truncation notice even
- * when the file contains non-ASCII content (e.g. Japanese comments, emoji).
+ * `Buffer.byteLength(char, "utf8")`. Appends a language-neutral banner
+ * reporting the number of bytes dropped so the model sees an accurate
+ * truncation notice without injecting syntax that looks like a comment in
+ * any particular language (files may be YAML, Swift, XML, etc.).
  */
 function truncateLines(content: string, maxBytes: number): string {
   const totalBytes = Buffer.byteLength(content, "utf8");
@@ -119,7 +121,7 @@ function truncateLines(content: string, maxBytes: number): string {
     headBytes += charBytes;
   }
   const bytesOmitted = totalBytes - headBytes;
-  return `${head}\n\n// ... (${bytesOmitted} bytes truncated — file exceeded ${maxBytes} bytes)`;
+  return `${head}\n--- [truncated: ${bytesOmitted} bytes omitted, file exceeded ${maxBytes} bytes] ---\n`;
 }
 
 /**
@@ -137,10 +139,10 @@ function errorToResult(err: unknown, context: string): ToolResultObject {
     if (err.status === 404) {
       return failure(`File not found while ${context}.`, err.message);
     }
-    return failure(
-      `GitHub API error (${err.status}) while ${context}: ${err.message}`,
-      err.message,
-    );
+    // `err.message` already carries the `GitHub API error (<status>): ...`
+    // prefix (see GitHubApiError in github-file-fetcher.ts), so we just
+    // frame it with the current operation context to avoid duplication.
+    return failure(`Error while ${context}: ${err.message}`, err.message);
   }
   const msg = err instanceof Error ? err.message : String(err);
   return failure(`Unexpected error while ${context}: ${msg}`, msg);

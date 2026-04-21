@@ -442,20 +442,18 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     // Tool mode is always active in this route (we pass `repoContext` below),
     // so the pipeline only consumes the `path` field of these entries — it
     // never reads `content` for routing or component files. Pass path-only
-    // records to avoid ~100 blanket Contents API calls per analysis. If the
-    // pipeline's legacy (non-tool) fallback is ever re-enabled here, gate the
-    // fetches behind `if (!useToolMode)` and keep the real contents.
-    const useToolMode = true;
-    const routingFiles = useToolMode
-      ? routingEntries.map((e) => ({ path: e.path, content: "" }))
-      : await fetchFileContents(owner, repo, routingEntries, token, {
-          maxFiles: 50,
-        });
-    const componentFiles = useToolMode
-      ? componentEntries.map((e) => ({ path: e.path, content: "" }))
-      : await fetchFileContents(owner, repo, componentEntries, token, {
-          maxFiles: 50,
-        });
+    // records to avoid ~100 blanket Contents API calls per analysis. If a
+    // legacy (non-tool) fallback is ever re-introduced here, derive the
+    // branch from the same condition that controls `repoContext` so the two
+    // cannot drift apart.
+    const routingFiles = routingEntries.map((e) => ({
+      path: e.path,
+      content: "",
+    }));
+    const componentFiles = componentEntries.map((e) => ({
+      path: e.path,
+      content: "",
+    }));
 
     // Send file count metadata
     await jobStore.sendProgress(jobId, {
