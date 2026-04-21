@@ -1,6 +1,43 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { Tool } from "@github/copilot-sdk";
+
+// ---------------------------------------------------------------------------
+// Mock @github/copilot-sdk BEFORE importing copilot-client
+// ---------------------------------------------------------------------------
+
+/**
+ * Capture the arguments createSession is invoked with so tests can assert
+ * that the correct `tools` / `availableTools` shape was passed.
+ */
+const createSessionCalls: Array<Record<string, unknown>> = [];
+const mockSendAndWait = vi.fn().mockResolvedValue({
+  data: { content: "[]" },
+});
+const mockDisconnect = vi.fn().mockResolvedValue(undefined);
+
+vi.mock("@github/copilot-sdk", () => {
+  class MockCopilotClient {
+    // constructor arguments are not asserted by these tests
+    constructor(_opts: unknown) {}
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn().mockResolvedValue(undefined);
+    createSession = vi.fn(async (opts: Record<string, unknown>) => {
+      createSessionCalls.push(opts);
+      return {
+        sendAndWait: mockSendAndWait,
+        disconnect: mockDisconnect,
+      };
+    });
+  }
+  return {
+    CopilotClient: MockCopilotClient,
+    approveAll: vi.fn(),
+  };
+});
+
 import {
   CopilotClientManager,
+  copilotAdapterFactory,
   type LLMAdapter,
   type LLMAdapterFactory,
 } from "./copilot-client.js";
@@ -97,5 +134,90 @@ describe("CopilotClientManager", () => {
     expect(first).toBe(second);
     expect(first.dispose).not.toHaveBeenCalled();
     expect(factory).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CopilotLLMAdapter — chatCompletion tools branching
+// ---------------------------------------------------------------------------
+
+function makeFakeTool(name: string): Tool<unknown> {
+  return {
+    name,
+    description: `desc-${name}`,
+    handler: () => "ok",
+  };
+}
+
+describe("CopilotLLMAdapter.chatCompletion", () => {
+  beforeEach(() => {
+    createSessionCalls.length = 0;
+    mockSendAndWait.mockClear();
+    mockDisconnect.mockClear();
+  });
+
+  it("passes tools + availableTools when custom tools are provided", async () => {
+    const adapter = copilotAdapterFactory("tok");
+    const tools = [makeFakeTool("readFile"), makeFakeTool("searchFiles")];
+
+    await adapter.chatCompletion({
+      model: "gpt-4.1",
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: "hi" },
+      ],
+      tools,
+    });
+
+    expect(createSessionCalls).toHaveLength(1);
+    const opts = createSessionCalls[0];
+    expect(opts.tools).toBe(tools);
+    expect(opts.availableTools).toEqual(["readFile", "searchFiles"]);
+  });
+
+  it("passes availableTools: [] and omits tools when tools are not provided", async () => {
+    const adapter = copilotAdapterFactory("tok");
+
+    await adapter.chatCompletion({
+      model: "gpt-4.1",
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: "hi" },
+      ],
+    });
+
+    expect(createSessionCalls).toHaveLength(1);
+    const opts = createSessionCalls[0];
+    expect(opts.availableTools).toEqual([]);
+    expect("tools" in opts).toBe(false);
+  });
+
+  it("treats an empty tools array as no tools", async () => {
+    const adapter = copilotAdapterFactory("tok");
+
+    await adapter.chatCompletion({
+      model: "gpt-4.1",
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: "hi" },
+      ],
+      tools: [],
+    });
+
+    expect(createSessionCalls).toHaveLength(1);
+    const opts = createSessionCalls[0];
+    expect(opts.availableTools).toEqual([]);
+    expect("tools" in opts).toBe(false);
+  });
+
+  it("throws when messages contains only a system entry", async () => {
+    const adapter = copilotAdapterFactory("tok");
+
+    await expect(
+      adapter.chatCompletion({
+        model: "gpt-4.1",
+        messages: [{ role: "system", content: "sys" }],
+      }),
+    ).rejects.toThrow(/non-system message/);
   });
 });

@@ -94,6 +94,11 @@ class CopilotLLMAdapter implements LLMAdapter {
 
     // Collect non-system messages; combine prior turns into context
     const nonSystemMsgs = options.messages.filter((m) => m.role !== "system");
+    if (nonSystemMsgs.length === 0) {
+      throw new Error(
+        "chatCompletion: messages must include at least one non-system message.",
+      );
+    }
     const lastUserMsg = nonSystemMsgs[nonSystemMsgs.length - 1];
 
     // Build context from prior turns (if any) to include in the prompt
@@ -103,15 +108,19 @@ class CopilotLLMAdapter implements LLMAdapter {
       const context = priorTurns
         .map((m) => `<${m.role}>\n${m.content}\n</${m.role}>`)
         .join("\n\n");
-      prompt = `Here is the prior conversation context:\n\n${context}\n\nNow, respond to the following:\n\n${lastUserMsg?.content ?? ""}`;
+      prompt = `Here is the prior conversation context:\n\n${context}\n\nNow, respond to the following:\n\n${lastUserMsg.content}`;
     } else {
-      prompt = lastUserMsg?.content ?? "";
+      prompt = lastUserMsg.content;
     }
 
     // When custom tools are provided, expose only those tools to Copilot.
     // Otherwise, disable all built-in tools (the default chat-completion mode).
-    const hasCustomTools =
-      options.tools !== undefined && options.tools.length > 0;
+    // Bind the narrowed tools array to a local so TS tracks the non-null type
+    // into the createSession call without needing `!`.
+    const customTools =
+      options.tools !== undefined && options.tools.length > 0
+        ? options.tools
+        : undefined;
 
     const session = await this.client.createSession({
       model: options.model,
@@ -120,10 +129,10 @@ class CopilotLLMAdapter implements LLMAdapter {
         mode: "replace",
         content: systemMsg,
       },
-      ...(hasCustomTools
+      ...(customTools
         ? {
-            tools: options.tools,
-            availableTools: options.tools!.map((t) => t.name),
+            tools: customTools,
+            availableTools: customTools.map((t) => t.name),
           }
         : { availableTools: [] }),
     });

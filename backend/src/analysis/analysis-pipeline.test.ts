@@ -486,6 +486,87 @@ describe("AnalysisPipeline tool-driven mode", () => {
     }
   });
 
+  it("does NOT embed component source in Turn 2 prompt (tool mode)", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE,
+      },
+    });
+
+    // Calls: [0]=Turn1, [1..3]=Turn2 for each screen, [4]=Turn3.
+    // Each Turn 2 call receives [system, user: Turn1, assistant: Turn1Resp,
+    // user: Turn2]. We want the LAST user message — the Turn 2 prompt.
+    for (let i = 1; i <= 3; i++) {
+      const userMsgs = adapter.calls[i].messages.filter(
+        (m) => m.role === "user",
+      );
+      const turn2UserMsg = userMsgs[userMsgs.length - 1];
+      expect(turn2UserMsg).toBeDefined();
+      const content = turn2UserMsg.content;
+      // The component file path appears (the prompt tells the model which file
+      // to readFile)
+      expect(content).toMatch(/\.component\.ts/);
+      // But NOT the source code from those files
+      expect(content).not.toContain("export class HomeComponent");
+      expect(content).not.toContain("export class DashboardComponent");
+      expect(content).not.toContain("export class LoginComponent");
+      expect(content).not.toContain("@Component({ template:");
+    }
+  });
+
+  it("returns empty variants and skips Turn 2 when componentFile is hallucinated (tool mode)", async () => {
+    const adapter = createMockAdapter([
+      // Turn 1: returns a screen whose componentFile isn't in the preload
+      // cache OR the fileTree — i.e., a hallucinated path.
+      JSON.stringify([
+        {
+          id: "screen_ghost",
+          path: "/ghost",
+          componentFile: "src/app/ghost.component.ts",
+          label: "Ghost",
+          description: "Not a real file",
+        },
+      ]),
+      // Turn 3: empty transitions
+      JSON.stringify([]),
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    const result = await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: [], // empty preload
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE, // also does NOT contain ghost.component.ts
+      },
+    });
+
+    // Variants should be empty because canAnalyze is false
+    expect(result.screens[0]!.variants).toEqual([]);
+    // Only Turn 1 and Turn 3 were called — Turn 2 was skipped
+    expect(adapter.calls).toHaveLength(2);
+  });
+
   it("still extracts variants when componentFile is only in fileTree (not preloaded)", async () => {
     const adapter = createMockAdapter([
       JSON.stringify([

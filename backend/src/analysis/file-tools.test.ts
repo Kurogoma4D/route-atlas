@@ -5,6 +5,7 @@ import {
   createGrepFilesTool,
   createFileTools,
   GREP_FILES_MAX_RESULTS,
+  GREP_FILES_MAX_FILE_BYTES,
   SEARCH_FILES_MAX_RESULTS,
   READ_FILE_MAX_BYTES,
   type FileToolContext,
@@ -118,6 +119,32 @@ describe("createReadFileTool", () => {
     expect(result).toBe(content);
     // Result should now be cached
     expect(ctx.preloadedContents.get("src/lib/utils.ts")).toBe(content);
+  });
+
+  it("serves subsequent calls from the cache without a second network round-trip", async () => {
+    const content = "export const x = 1;";
+    vi.mocked(fetch).mockResolvedValueOnce(
+      mockFetchResponse({
+        name: "utils.ts",
+        path: "src/lib/utils.ts",
+        sha: "abc",
+        size: content.length,
+        type: "file",
+        content: base64Encode(content),
+        encoding: "base64",
+      }),
+    );
+
+    const ctx = makeCtx();
+    const tool = createReadFileTool(ctx);
+
+    const first = await tool.handler({ path: "src/lib/utils.ts" }, INVOCATION);
+    const second = await tool.handler({ path: "src/lib/utils.ts" }, INVOCATION);
+
+    expect(first).toBe(content);
+    expect(second).toBe(content);
+    // fetch was called exactly once — the second call hit the cache
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 
   it("rejects paths not in the file tree", async () => {
@@ -335,6 +362,58 @@ describe("createGrepFilesTool", () => {
     const result = tool.handler({ query: "router.push" }, INVOCATION) as string;
 
     expect(result.split("\n")).toHaveLength(GREP_FILES_MAX_RESULTS);
+  });
+
+  it("caps results at GREP_FILES_MAX_RESULTS across multiple files (exercises outer break)", () => {
+    // Each file contains enough matching lines that iterating just the first
+    // would already hit the cap. The outer `break` stops iteration across
+    // files once the cap is reached.
+    const perFile = Math.ceil(GREP_FILES_MAX_RESULTS / 2) + 5;
+    const makeContent = (prefix: string) =>
+      Array.from({ length: perFile })
+        .map((_, i) => `${prefix} router.push('${i}');`)
+        .join("\n");
+
+    const ctx = makeCtx({
+      preloadedContents: new Map([
+        ["a.ts", makeContent("a")],
+        ["b.ts", makeContent("b")],
+        // A third file that should NOT be reached once the cap is hit
+        ["c.ts", makeContent("c")],
+      ]),
+    });
+    const tool = createGrepFilesTool(ctx);
+
+    const result = tool.handler({ query: "router.push" }, INVOCATION) as string;
+    const lines = result.split("\n");
+
+    // Exactly GREP_FILES_MAX_RESULTS lines returned
+    expect(lines).toHaveLength(GREP_FILES_MAX_RESULTS);
+    // Matches from both 'a.ts' and 'b.ts' appear (outer loop did iterate into
+    // the second file after the first file's inner loop broke)
+    expect(lines.some((l) => l.startsWith("a.ts:"))).toBe(true);
+    expect(lines.some((l) => l.startsWith("b.ts:"))).toBe(true);
+    // 'c.ts' was never scanned because the outer break fired
+    expect(lines.every((l) => !l.startsWith("c.ts:"))).toBe(true);
+  });
+
+  it("skips files larger than the per-file size cap", () => {
+    // Construct a file that exceeds GREP_FILES_MAX_FILE_BYTES. We build it
+    // from a single repeated character so it stays well above the threshold
+    // without blowing up test runtime.
+    const bigContent = "x".repeat(GREP_FILES_MAX_FILE_BYTES + 10);
+    const ctx = makeCtx({
+      preloadedContents: new Map([
+        ["huge.ts", bigContent + "\nneedle-here"],
+        ["small.ts", "small file\nneedle-here"],
+      ]),
+    });
+    const tool = createGrepFilesTool(ctx);
+
+    const result = tool.handler({ query: "needle-here" }, INVOCATION) as string;
+
+    expect(result).toContain("small.ts:");
+    expect(result).not.toContain("huge.ts:");
   });
 
   it("returns an error for malformed arguments", () => {

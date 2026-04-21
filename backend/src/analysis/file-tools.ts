@@ -76,6 +76,14 @@ export const SEARCH_FILES_MAX_RESULTS = 100;
 export const GREP_FILES_MAX_RESULTS = 50;
 
 /**
+ * Maximum per-file size (characters) that `grepFiles` will scan.
+ * Very large preloaded files are skipped to keep regex / substring scan
+ * times bounded — a single 50 MB minified bundle could otherwise dominate a
+ * grep invocation.
+ */
+export const GREP_FILES_MAX_FILE_BYTES = 1_000_000;
+
+/**
  * Maximum file size (bytes) that `readFile` will fetch on demand.
  * Larger files are truncated to this length and annotated with a marker.
  */
@@ -142,8 +150,21 @@ function isGrepFilesArgs(v: unknown): v is GrepFilesArgs {
  *
  * The tool first consults the preloaded cache, then falls back to a GitHub
  * Contents/Blob API call. Requested paths must exist in `fileTree`.
+ *
+ * The return type is `Tool<unknown>` because the handler validates its
+ * arguments at runtime from an `unknown` payload — this matches how the SDK
+ * invokes tool handlers and keeps the type structurally compatible with
+ * {@link ChatCompletionOptions.tools}.
  */
-export function createReadFileTool(ctx: FileToolContext): Tool<ReadFileArgs> {
+export function createReadFileTool(ctx: FileToolContext): Tool<unknown> {
+  // Pre-index the file tree by path so each readFile call is O(1).
+  // The model may invoke readFile many times per analysis run; a linear scan
+  // per call would be O(n) in the full tree for every invocation.
+  const fileTreeByPath = new Map<string, TreeEntry>();
+  for (const entry of ctx.fileTree) {
+    fileTreeByPath.set(entry.path, entry);
+  }
+
   return {
     name: "readFile",
     description:
@@ -181,7 +202,7 @@ export function createReadFileTool(ctx: FileToolContext): Tool<ReadFileArgs> {
       }
 
       // The file must exist in the pre-fetched tree
-      const entry = ctx.fileTree.find((f) => f.path === path);
+      const entry = fileTreeByPath.get(path);
       if (!entry) {
         return `Error: readFile — '${path}' is not in the repository file list.`;
       }
@@ -213,9 +234,7 @@ export function createReadFileTool(ctx: FileToolContext): Tool<ReadFileArgs> {
  * The match runs purely against the pre-fetched `fileTree`, so it is fast and
  * rate-limit-free. Results are capped at {@link SEARCH_FILES_MAX_RESULTS}.
  */
-export function createSearchFilesTool(
-  ctx: FileToolContext,
-): Tool<SearchFilesArgs> {
+export function createSearchFilesTool(ctx: FileToolContext): Tool<unknown> {
   return {
     name: "searchFiles",
     description:
@@ -272,7 +291,20 @@ export function createSearchFilesTool(
  * you want to search isn't loaded yet, call `readFile` on it first. This
  * keeps the tool rate-limit-free and fast.
  */
-export function createGrepFilesTool(ctx: FileToolContext): Tool<GrepFilesArgs> {
+export function createGrepFilesTool(ctx: FileToolContext): Tool<unknown> {
+  // Cache line-split arrays per file so repeated grepFiles invocations within
+  // one analysis run don't re-split the same large files over and over.
+  // Populated lazily on first access per path.
+  const splitCache = new Map<string, string[]>();
+
+  function getLines(path: string, content: string): string[] {
+    const cached = splitCache.get(path);
+    if (cached !== undefined) return cached;
+    const lines = content.split("\n");
+    splitCache.set(path, lines);
+    return lines;
+  }
+
   return {
     name: "grepFiles",
     description:
@@ -280,7 +312,9 @@ export function createGrepFilesTool(ctx: FileToolContext): Tool<GrepFilesArgs> {
       "Returns up to " +
       `${GREP_FILES_MAX_RESULTS} lines of the form 'path:lineNo:text'. ` +
       "Only files that have been fetched (either preloaded or via readFile) " +
-      "are searched. Use the optional 'glob' argument to narrow the scope " +
+      "are searched. Files larger than " +
+      `${GREP_FILES_MAX_FILE_BYTES} bytes are skipped to keep scan times ` +
+      "bounded. Use the optional 'glob' argument to narrow the scope " +
       "(e.g. 'src/**/*.tsx').",
     parameters: {
       type: "object",
@@ -312,8 +346,10 @@ export function createGrepFilesTool(ctx: FileToolContext): Tool<GrepFilesArgs> {
 
       for (const [path, content] of ctx.preloadedContents) {
         if (args.glob && !minimatch(path, args.glob)) continue;
+        // Skip pathologically large files to bound scan time.
+        if (content.length > GREP_FILES_MAX_FILE_BYTES) continue;
 
-        const lines = content.split("\n");
+        const lines = getLines(path, content);
         for (let i = 0; i < lines.length; i++) {
           if (lines[i].toLowerCase().includes(lowered)) {
             matches.push(`${path}:${i + 1}:${lines[i].trim()}`);
@@ -337,10 +373,13 @@ export function createGrepFilesTool(ctx: FileToolContext): Tool<GrepFilesArgs> {
 
 /**
  * Build the full set of file-exploration tools for an analysis run.
+ *
+ * The return type is `Tool<unknown>[]` because each tool's handler validates
+ * its arguments at runtime from `unknown` (see the `is*Args` guards above).
+ * This matches how the tools are consumed by {@link ChatCompletionOptions},
+ * avoiding unsafe casts through `unknown`.
  */
-export function createFileTools(
-  ctx: FileToolContext,
-): [Tool<ReadFileArgs>, Tool<SearchFilesArgs>, Tool<GrepFilesArgs>] {
+export function createFileTools(ctx: FileToolContext): Tool<unknown>[] {
   return [
     createReadFileTool(ctx),
     createSearchFilesTool(ctx),

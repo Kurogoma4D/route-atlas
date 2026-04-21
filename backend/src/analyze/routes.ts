@@ -476,12 +476,14 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     // Restrict the file tree passed to Copilot tools to files the analysis
     // actually cares about. Passing the entire tree (node_modules, images,
     // build output, etc.) would make tool responses noisy and wasteful.
+    // Use a Set for O(1) membership checks — the nested .some() form was
+    // O(|allFiles| * (|routingEntries| + |componentEntries|)).
+    const allowedPaths = new Set<string>();
+    for (const r of routingEntries) allowedPaths.add(r.path);
+    for (const c of componentEntries) allowedPaths.add(c.path);
     const relevantTreeEntries = allFiles.filter((entry) => {
       if (isExcludedPath(entry.path)) return false;
-      return (
-        routingEntries.some((r) => r.path === entry.path) ||
-        componentEntries.some((c) => c.path === entry.path)
-      );
+      return allowedPaths.has(entry.path);
     });
 
     const result = await pipeline.run({

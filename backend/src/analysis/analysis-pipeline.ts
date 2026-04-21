@@ -17,7 +17,6 @@ import type {
 } from "@route-atlas/shared";
 import type { LLMAdapter, ChatMessage } from "./copilot-client.js";
 import type { FrameworkName } from "./framework-detector.js";
-import type { TreeEntry } from "./github-file-fetcher.js";
 import { createFileTools, type FileToolContext } from "./file-tools.js";
 import type { Tool } from "@github/copilot-sdk";
 import {
@@ -177,7 +176,7 @@ export class AnalysisPipeline {
         ...input.fileToolContext,
         preloadedContents,
       };
-      tools = createFileTools(ctx) as unknown as Tool<unknown>[];
+      tools = createFileTools(ctx);
     }
 
     const systemPrompt = toolMode ? SYSTEM_PROMPT_WITH_TOOLS : SYSTEM_PROMPT;
@@ -230,7 +229,7 @@ export class AnalysisPipeline {
       adapter: LLMAdapter,
       rawScreen: RawScreen,
       componentFiles: { path: string; content: string }[],
-      fileTree: TreeEntry[] | undefined,
+      fileTreePaths: Set<string> | undefined,
       baseMessages: ChatMessage[],
       selectedModel: string,
       turnTools: Tool<unknown>[] | undefined,
@@ -238,9 +237,7 @@ export class AnalysisPipeline {
       const componentSource = componentFiles.find(
         (f) => f.path === rawScreen.componentFile,
       );
-      const componentInTree = fileTree?.some(
-        (e) => e.path === rawScreen.componentFile,
-      );
+      const componentInTree = fileTreePaths?.has(rawScreen.componentFile);
 
       // In tool mode, proceed as long as the file exists somewhere — either in
       // the preload cache (componentSource) or in the full file tree.
@@ -276,6 +273,13 @@ export class AnalysisPipeline {
     const screensWithVariants: Screen[] = [];
     const turn1Context: ChatMessage[] = [...conversationHistory];
 
+    // Hoist the file-tree path set once before the batch loop so each
+    // extractVariants call does an O(1) membership check instead of O(n)
+    // `fileTree.some(...)` inside the Promise.all batch.
+    const fileTreePaths = input.fileToolContext?.fileTree
+      ? new Set(input.fileToolContext.fileTree.map((e) => e.path))
+      : undefined;
+
     for (let i = 0; i < rawScreens.length; i += TURN2_BATCH_SIZE) {
       const batch = rawScreens.slice(i, i + TURN2_BATCH_SIZE);
       const batchResults = await Promise.all(
@@ -284,7 +288,7 @@ export class AnalysisPipeline {
             this.adapter,
             screen,
             input.componentFiles,
-            input.fileToolContext?.fileTree,
+            fileTreePaths,
             turn1Context,
             model,
             tools,

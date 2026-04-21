@@ -764,13 +764,54 @@ When you have gathered enough information, emit ONLY the JSON array as your fina
 }
 
 /**
+ * Validate that a value looks like a screen id (`screen_<snake_case>`).
+ *
+ * Turn 1 output is LLM-generated from arbitrary repo content; a malicious
+ * repository could craft source that induces embedded newlines or prompt
+ * injection into `screenId`. We restrict the shape to a small safe alphabet
+ * before interpolating it into a subsequent prompt.
+ */
+function isSafeScreenId(value: string): boolean {
+  return /^screen_[a-z0-9_]+$/.test(value);
+}
+
+/**
+ * Validate that a value looks like a single-line, control-character-free file
+ * path. Used to sanitize `componentFile` values produced by Turn 1 before
+ * re-embedding them in a Turn 2 prompt (prompt-injection defense).
+ */
+function isSafeComponentFile(value: string): boolean {
+  if (value.length === 0 || value.length > 500) return false;
+  // Reject ANY control characters (including \n, \r, \t, null, ...)
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(value)) return false;
+  // Minimal structural check: looks like a path (no backticks, no triple quotes).
+  if (value.includes("```")) return false;
+  return true;
+}
+
+/**
  * Turn 2 prompt variant: tells the model to read a single component file via
  * `readFile` and extract state variants.
+ *
+ * Throws if `screenId` / `componentFile` fail validation — these come from the
+ * Turn 1 LLM response and must be sanitized before re-interpolation.
  */
 export function buildTurn2PromptWithTools(
   screenId: string,
   componentFile: string,
 ): string {
+  if (!isSafeScreenId(screenId)) {
+    throw new Error(
+      `buildTurn2PromptWithTools: invalid screenId '${screenId.slice(0, 80)}' — must match /^screen_[a-z0-9_]+$/`,
+    );
+  }
+  if (!isSafeComponentFile(componentFile)) {
+    throw new Error(
+      `buildTurn2PromptWithTools: invalid componentFile — must be a single-line path with no control characters`,
+    );
+  }
+
   return `Analyze the component file for screen "${screenId}" and extract all state variants.
 
 Use the \`readFile\` tool to open: ${componentFile}
