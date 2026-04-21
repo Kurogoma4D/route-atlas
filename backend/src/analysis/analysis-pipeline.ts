@@ -17,11 +17,18 @@ import type {
 } from "@route-atlas/shared";
 import type { LLMAdapter, ChatMessage } from "./copilot-client.js";
 import type { FrameworkName } from "./framework-detector.js";
+import type { TreeEntry } from "./github-file-fetcher.js";
+import { createFileTools, type FileToolContext } from "./file-tools.js";
+import type { Tool } from "@github/copilot-sdk";
 import {
   SYSTEM_PROMPT,
+  SYSTEM_PROMPT_WITH_TOOLS,
   buildTurn1Prompt,
   buildTurn2Prompt,
   buildTurn3Prompt,
+  buildTurn1PromptWithTools,
+  buildTurn2PromptWithTools,
+  buildTurn3PromptWithTools,
 } from "./prompts.js";
 
 // ---------------------------------------------------------------------------
@@ -77,6 +84,21 @@ export interface AnalysisPipelineInput {
 
   /** Optional callback invoked between pipeline turns to report real progress. */
   onProgress?: OnPipelineProgress;
+
+  /**
+   * When present, the pipeline runs in tool-driven mode: file contents are
+   * NOT embedded in the prompt; instead Copilot fetches them on demand via
+   * the `readFile` / `searchFiles` / `grepFiles` custom tools.
+   *
+   * The pipeline still uses {@link AnalysisPipelineInput.routingFiles} and
+   * {@link AnalysisPipelineInput.componentFiles} as hints (their paths are
+   * listed in the prompt) and as the preload cache — avoiding a redundant
+   * fetch when the model `readFile`s a path already on hand.
+   */
+  fileToolContext?: Pick<
+    FileToolContext,
+    "owner" | "repo" | "branch" | "token" | "fileTree"
+  >;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,19 +160,46 @@ export class AnalysisPipeline {
    */
   async run(input: AnalysisPipelineInput): Promise<AnalysisResult> {
     const model = input.model ?? DEFAULT_MODEL;
+    const toolMode = input.fileToolContext !== undefined;
+
+    // Build a preload cache and custom tools (only used in tool mode).
+    // The cache is shared across all three turns so files read in Turn 1
+    // don't need to be fetched again in Turn 3.
+    const preloadedContents = new Map<string, string>();
+    for (const f of input.routingFiles)
+      preloadedContents.set(f.path, f.content);
+    for (const f of input.componentFiles)
+      preloadedContents.set(f.path, f.content);
+
+    let tools: Tool<unknown>[] | undefined;
+    if (input.fileToolContext) {
+      const ctx: FileToolContext = {
+        ...input.fileToolContext,
+        preloadedContents,
+      };
+      tools = createFileTools(ctx) as unknown as Tool<unknown>[];
+    }
+
+    const systemPrompt = toolMode ? SYSTEM_PROMPT_WITH_TOOLS : SYSTEM_PROMPT;
     const conversationHistory: ChatMessage[] = [
-      { role: "system", content: SYSTEM_PROMPT },
+      { role: "system", content: systemPrompt },
     ];
 
     // ------------------------------------------------------------------
     // Turn 1 — extract screens
     // ------------------------------------------------------------------
-    const turn1Prompt = buildTurn1Prompt(input.framework, input.routingFiles);
+    const turn1Prompt = toolMode
+      ? buildTurn1PromptWithTools(
+          input.framework,
+          input.routingFiles.map((f) => f.path),
+        )
+      : buildTurn1Prompt(input.framework, input.routingFiles);
     conversationHistory.push({ role: "user", content: turn1Prompt });
 
     const turn1Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
+      tools,
     });
 
     conversationHistory.push({
@@ -181,26 +230,41 @@ export class AnalysisPipeline {
       adapter: LLMAdapter,
       rawScreen: RawScreen,
       componentFiles: { path: string; content: string }[],
+      fileTree: TreeEntry[] | undefined,
       baseMessages: ChatMessage[],
       selectedModel: string,
+      turnTools: Tool<unknown>[] | undefined,
     ): Promise<Screen> {
       const componentSource = componentFiles.find(
         (f) => f.path === rawScreen.componentFile,
       );
+      const componentInTree = fileTree?.some(
+        (e) => e.path === rawScreen.componentFile,
+      );
+
+      // In tool mode, proceed as long as the file exists somewhere — either in
+      // the preload cache (componentSource) or in the full file tree.
+      // In non-tool mode, only proceed when we already have the source.
+      const canAnalyze = turnTools
+        ? Boolean(componentSource) || Boolean(componentInTree)
+        : Boolean(componentSource);
 
       let variants: Variant[] = [];
 
-      if (componentSource) {
-        const turn2Prompt = buildTurn2Prompt(
-          rawScreen.id,
-          rawScreen.componentFile,
-          componentSource.content,
-          input.framework,
-        );
+      if (canAnalyze) {
+        const turn2Prompt = turnTools
+          ? buildTurn2PromptWithTools(rawScreen.id, rawScreen.componentFile)
+          : buildTurn2Prompt(
+              rawScreen.id,
+              rawScreen.componentFile,
+              componentSource!.content,
+              input.framework,
+            );
 
         const turn2Response = await adapter.chatCompletion({
           model: selectedModel,
           messages: [...baseMessages, { role: "user", content: turn2Prompt }],
+          tools: turnTools,
         });
 
         variants = parseLLMJson<Variant[]>(turn2Response.content, isArray);
@@ -220,8 +284,10 @@ export class AnalysisPipeline {
             this.adapter,
             screen,
             input.componentFiles,
+            input.fileToolContext?.fileTree,
             turn1Context,
             model,
+            tools,
           ),
         ),
       );
@@ -239,16 +305,22 @@ export class AnalysisPipeline {
       path: s.path,
     }));
 
-    const turn3Prompt = buildTurn3Prompt(
-      screenSummary,
-      input.componentFiles,
-      input.framework,
-    );
+    const turn3Prompt = toolMode
+      ? buildTurn3PromptWithTools(
+          screenSummary,
+          // Prefer the broader file-tree paths when available so the model can
+          // discover files beyond the preload set. Fall back to preload paths.
+          input.fileToolContext
+            ? input.fileToolContext.fileTree.map((e) => e.path)
+            : input.componentFiles.map((f) => f.path),
+        )
+      : buildTurn3Prompt(screenSummary, input.componentFiles, input.framework);
     conversationHistory.push({ role: "user", content: turn3Prompt });
 
     const turn3Response = await this.adapter.chatCompletion({
       model,
       messages: [...conversationHistory],
+      tools,
     });
 
     const transitions = parseLLMJson<Transition[]>(

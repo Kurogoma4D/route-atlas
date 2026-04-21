@@ -342,6 +342,186 @@ describe("AnalysisPipeline", () => {
 // Model selection helpers
 // ---------------------------------------------------------------------------
 
+describe("AnalysisPipeline tool-driven mode", () => {
+  const TREE = [
+    {
+      path: "src/app/home.component.ts",
+      mode: "100644",
+      type: "blob" as const,
+      sha: "sha_home",
+      size: 100,
+      url: "u",
+    },
+    {
+      path: "src/app/dashboard.component.ts",
+      mode: "100644",
+      type: "blob" as const,
+      sha: "sha_dash",
+      size: 100,
+      url: "u",
+    },
+    {
+      path: "src/app/login.component.ts",
+      mode: "100644",
+      type: "blob" as const,
+      sha: "sha_login",
+      size: 100,
+      url: "u",
+    },
+  ];
+
+  it("passes file-exploration tools to the adapter on every turn", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE,
+      },
+    });
+
+    expect(adapter.calls.length).toBeGreaterThan(0);
+    for (const call of adapter.calls) {
+      expect(call.tools).toBeDefined();
+      const toolNames = call.tools!.map((t) => t.name);
+      expect(toolNames).toEqual(["readFile", "searchFiles", "grepFiles"]);
+    }
+  });
+
+  it("uses the tool-driven system prompt", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE,
+      },
+    });
+
+    const systemMsg = adapter.calls[0].messages.find(
+      (m) => m.role === "system",
+    )!;
+    expect(systemMsg.content).toContain("readFile");
+    expect(systemMsg.content).toContain("searchFiles");
+    expect(systemMsg.content).toContain("grepFiles");
+  });
+
+  it("does NOT embed full file contents in Turn 1 prompt (tool mode)", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE,
+      },
+    });
+
+    const turn1Prompt = adapter.calls[0].messages.find(
+      (m) => m.role === "user",
+    )!.content;
+    // Path is listed
+    expect(turn1Prompt).toContain("src/app/routes.ts");
+    // But the file's actual content is NOT embedded
+    expect(turn1Prompt).not.toContain("HomeComponent");
+    expect(turn1Prompt).not.toContain("DashboardComponent");
+  });
+
+  it("omits tools when fileToolContext is not provided", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+    });
+
+    for (const call of adapter.calls) {
+      expect(call.tools).toBeUndefined();
+    }
+  });
+
+  it("still extracts variants when componentFile is only in fileTree (not preloaded)", async () => {
+    const adapter = createMockAdapter([
+      JSON.stringify([
+        {
+          id: "screen_home",
+          path: "/",
+          // This file is in the TREE but not in the componentFiles preload
+          componentFile: "src/app/home.component.ts",
+          label: "Home",
+          description: "Home",
+        },
+      ]),
+      TURN2_HOME_RESPONSE,
+      JSON.stringify([]), // Turn 3
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    const result = await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: [], // empty preload — model must use the tools
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE,
+      },
+    });
+
+    expect(result.screens[0]!.variants).toHaveLength(1);
+    // 3 calls: Turn 1, Turn 2 for the one screen, Turn 3
+    expect(adapter.calls).toHaveLength(3);
+  });
+});
+
 describe("isSupportedModel", () => {
   it("accepts all supported models", () => {
     for (const model of SUPPORTED_MODELS) {

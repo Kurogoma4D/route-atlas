@@ -473,11 +473,29 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const adapter = clientManager.getClient(params.userId, token);
     const pipeline = new AnalysisPipeline(adapter);
 
+    // Restrict the file tree passed to Copilot tools to files the analysis
+    // actually cares about. Passing the entire tree (node_modules, images,
+    // build output, etc.) would make tool responses noisy and wasteful.
+    const relevantTreeEntries = allFiles.filter((entry) => {
+      if (isExcludedPath(entry.path)) return false;
+      return (
+        routingEntries.some((r) => r.path === entry.path) ||
+        componentEntries.some((c) => c.path === entry.path)
+      );
+    });
+
     const result = await pipeline.run({
       framework,
       routingFiles,
       componentFiles,
       model,
+      fileToolContext: {
+        owner,
+        repo,
+        branch,
+        token,
+        fileTree: relevantTreeEntries,
+      },
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {
           void jobStore.sendProgress(jobId, {

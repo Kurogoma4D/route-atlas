@@ -1,0 +1,349 @@
+/**
+ * Copilot Custom Tools for On-Demand File Exploration
+ *
+ * Defines custom tools that Copilot can invoke during a chat turn to fetch
+ * repository content on demand, rather than embedding entire file contents
+ * in the prompt up front. This keeps token usage bounded on large repositories.
+ *
+ * Three tools are exposed:
+ *   - `readFile(path)`                — fetch a single file via GitHub Contents / Blob API
+ *   - `searchFiles(pattern)`          — glob-match paths from the pre-fetched file tree
+ *   - `grepFiles(query, glob?)`       — case-insensitive substring search over known file contents
+ *
+ * Reference: issue #90
+ */
+
+import { minimatch } from "minimatch";
+import type { Tool } from "@github/copilot-sdk";
+import {
+  fetchSingleFileContent,
+  GitHubApiError,
+  GitHubRateLimitError,
+  type TreeEntry,
+} from "./github-file-fetcher.js";
+
+// ---------------------------------------------------------------------------
+// Tool argument shapes
+// ---------------------------------------------------------------------------
+
+export interface ReadFileArgs {
+  path: string;
+}
+
+export interface SearchFilesArgs {
+  pattern: string;
+}
+
+export interface GrepFilesArgs {
+  query: string;
+  glob?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Tool context — data the tools need to operate
+// ---------------------------------------------------------------------------
+
+/**
+ * Contextual data required to build a set of file tools for one analysis run.
+ *
+ * `fileTree` is the pre-fetched, filtered list of blob entries for the
+ * repository. `readFile` only accepts paths that appear in this list (to
+ * protect against prompt injection requesting unrelated paths).
+ *
+ * `preloadedContents` maps already-fetched file paths to their decoded text.
+ * It is the preferred source for `readFile` and is used by `grepFiles`.
+ * Tools fetch from the GitHub API only if a requested file isn't preloaded.
+ */
+export interface FileToolContext {
+  owner: string;
+  repo: string;
+  branch: string;
+  token: string;
+  /** Complete blob list for the repo (already filtered to relevant extensions). */
+  fileTree: TreeEntry[];
+  /** Map of path -> decoded content for files already fetched upstream. */
+  preloadedContents: Map<string, string>;
+}
+
+// ---------------------------------------------------------------------------
+// Limits — defensive caps to keep prompt roundtrips bounded
+// ---------------------------------------------------------------------------
+
+/** Maximum number of paths returned by `searchFiles`. */
+export const SEARCH_FILES_MAX_RESULTS = 100;
+
+/** Maximum number of grep matches returned. */
+export const GREP_FILES_MAX_RESULTS = 50;
+
+/**
+ * Maximum file size (bytes) that `readFile` will fetch on demand.
+ * Larger files are truncated to this length and annotated with a marker.
+ */
+export const READ_FILE_MAX_BYTES = 200_000;
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+function truncateContent(content: string): string {
+  if (content.length <= READ_FILE_MAX_BYTES) return content;
+  return (
+    content.slice(0, READ_FILE_MAX_BYTES) +
+    `\n/* [route-atlas] truncated after ${READ_FILE_MAX_BYTES} bytes */`
+  );
+}
+
+function formatToolError(prefix: string, err: unknown): string {
+  if (err instanceof GitHubRateLimitError) {
+    return `Error: GitHub API rate limit hit while ${prefix}. Retry after ${err.retryAfterSeconds}s.`;
+  }
+  if (err instanceof GitHubApiError) {
+    if (err.status === 404) {
+      return `Error: ${prefix} — file not found (HTTP 404).`;
+    }
+    return `Error: ${prefix} — GitHub API returned HTTP ${err.status}.`;
+  }
+  if (err instanceof Error) {
+    return `Error: ${prefix} — ${err.message}`;
+  }
+  return `Error: ${prefix} — unknown failure.`;
+}
+
+function isReadFileArgs(v: unknown): v is ReadFileArgs {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as { path?: unknown }).path === "string"
+  );
+}
+
+function isSearchFilesArgs(v: unknown): v is SearchFilesArgs {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as { pattern?: unknown }).pattern === "string"
+  );
+}
+
+function isGrepFilesArgs(v: unknown): v is GrepFilesArgs {
+  if (typeof v !== "object" || v === null) return false;
+  const obj = v as { query?: unknown; glob?: unknown };
+  if (typeof obj.query !== "string") return false;
+  if (obj.glob !== undefined && typeof obj.glob !== "string") return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// readFile
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `readFile` tool that fetches a single file's text content.
+ *
+ * The tool first consults the preloaded cache, then falls back to a GitHub
+ * Contents/Blob API call. Requested paths must exist in `fileTree`.
+ */
+export function createReadFileTool(ctx: FileToolContext): Tool<ReadFileArgs> {
+  return {
+    name: "readFile",
+    description:
+      "Read the text contents of a single file from the repository. " +
+      "Use this when you need the full source of a file to analyze routes, " +
+      "components, or navigation. Pass the exact path as returned by the " +
+      "file list or searchFiles. Returns the file content, or an error string " +
+      "starting with 'Error:' if the file is not in the repository.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description:
+            "Repository-relative file path, e.g. 'src/app/page.tsx'.",
+        },
+      },
+      required: ["path"],
+    },
+    skipPermission: true,
+    handler: async (args: unknown): Promise<string> => {
+      if (!isReadFileArgs(args)) {
+        return "Error: readFile requires a { path: string } argument.";
+      }
+
+      const path = args.path.trim();
+      if (path.length === 0) {
+        return "Error: readFile 'path' must be a non-empty string.";
+      }
+
+      // Preloaded cache hit
+      const cached = ctx.preloadedContents.get(path);
+      if (cached !== undefined) {
+        return truncateContent(cached);
+      }
+
+      // The file must exist in the pre-fetched tree
+      const entry = ctx.fileTree.find((f) => f.path === path);
+      if (!entry) {
+        return `Error: readFile — '${path}' is not in the repository file list.`;
+      }
+
+      try {
+        const content = await fetchSingleFileContent(
+          ctx.owner,
+          ctx.repo,
+          entry,
+          ctx.token,
+          ctx.branch,
+        );
+        ctx.preloadedContents.set(path, content);
+        return truncateContent(content);
+      } catch (err) {
+        return formatToolError(`reading '${path}'`, err);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// searchFiles
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `searchFiles` tool that glob-matches paths against the file tree.
+ *
+ * The match runs purely against the pre-fetched `fileTree`, so it is fast and
+ * rate-limit-free. Results are capped at {@link SEARCH_FILES_MAX_RESULTS}.
+ */
+export function createSearchFilesTool(
+  ctx: FileToolContext,
+): Tool<SearchFilesArgs> {
+  return {
+    name: "searchFiles",
+    description:
+      "Find repository file paths matching a glob pattern. Use '**' to " +
+      "recurse across directories, e.g. 'src/**/*.tsx'. Returns a newline-" +
+      "separated list of matching paths (capped at " +
+      `${SEARCH_FILES_MAX_RESULTS} entries).`,
+    parameters: {
+      type: "object",
+      properties: {
+        pattern: {
+          type: "string",
+          description: "Glob pattern, e.g. 'app/**/page.{tsx,jsx}'.",
+        },
+      },
+      required: ["pattern"],
+    },
+    skipPermission: true,
+    handler: (args: unknown): string => {
+      if (!isSearchFilesArgs(args)) {
+        return "Error: searchFiles requires a { pattern: string } argument.";
+      }
+
+      const pattern = args.pattern.trim();
+      if (pattern.length === 0) {
+        return "Error: searchFiles 'pattern' must be a non-empty string.";
+      }
+
+      const matches: string[] = [];
+      for (const entry of ctx.fileTree) {
+        if (minimatch(entry.path, pattern)) {
+          matches.push(entry.path);
+          if (matches.length >= SEARCH_FILES_MAX_RESULTS) break;
+        }
+      }
+
+      if (matches.length === 0) {
+        return `No files match pattern '${pattern}'.`;
+      }
+      return matches.join("\n");
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// grepFiles
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a `grepFiles` tool that searches the preloaded file contents for a
+ * (case-insensitive) literal substring, optionally restricted by a glob.
+ *
+ * Scope is limited to {@link FileToolContext.preloadedContents}. If a file
+ * you want to search isn't loaded yet, call `readFile` on it first. This
+ * keeps the tool rate-limit-free and fast.
+ */
+export function createGrepFilesTool(ctx: FileToolContext): Tool<GrepFilesArgs> {
+  return {
+    name: "grepFiles",
+    description:
+      "Search previously-read files for a case-insensitive substring. " +
+      "Returns up to " +
+      `${GREP_FILES_MAX_RESULTS} lines of the form 'path:lineNo:text'. ` +
+      "Only files that have been fetched (either preloaded or via readFile) " +
+      "are searched. Use the optional 'glob' argument to narrow the scope " +
+      "(e.g. 'src/**/*.tsx').",
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Literal text to search for (case-insensitive).",
+        },
+        glob: {
+          type: "string",
+          description: "Optional glob to limit files, e.g. 'app/**/*.tsx'.",
+        },
+      },
+      required: ["query"],
+    },
+    skipPermission: true,
+    handler: (args: unknown): string => {
+      if (!isGrepFilesArgs(args)) {
+        return "Error: grepFiles requires a { query: string, glob?: string } argument.";
+      }
+
+      const query = args.query.trim();
+      if (query.length === 0) {
+        return "Error: grepFiles 'query' must be a non-empty string.";
+      }
+
+      const lowered = query.toLowerCase();
+      const matches: string[] = [];
+
+      for (const [path, content] of ctx.preloadedContents) {
+        if (args.glob && !minimatch(path, args.glob)) continue;
+
+        const lines = content.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].toLowerCase().includes(lowered)) {
+            matches.push(`${path}:${i + 1}:${lines[i].trim()}`);
+            if (matches.length >= GREP_FILES_MAX_RESULTS) break;
+          }
+        }
+        if (matches.length >= GREP_FILES_MAX_RESULTS) break;
+      }
+
+      if (matches.length === 0) {
+        return `No matches for '${query}'${args.glob ? ` (glob: ${args.glob})` : ""} in the currently-loaded files.`;
+      }
+      return matches.join("\n");
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Convenience: build all three tools for a context
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the full set of file-exploration tools for an analysis run.
+ */
+export function createFileTools(
+  ctx: FileToolContext,
+): [Tool<ReadFileArgs>, Tool<SearchFilesArgs>, Tool<GrepFilesArgs>] {
+  return [
+    createReadFileTool(ctx),
+    createSearchFilesTool(ctx),
+    createGrepFilesTool(ctx),
+  ];
+}

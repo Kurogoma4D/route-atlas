@@ -29,6 +29,27 @@ state variations, and navigation transitions.
 IMPORTANT: Always respond with ONLY valid JSON — no markdown fences, no
 explanatory text before or after the JSON.`;
 
+/**
+ * System prompt used when the model has access to the file-exploration tools
+ * (`readFile`, `searchFiles`, `grepFiles`). The model is explicitly instructed
+ * to fetch file contents on demand instead of expecting them inlined.
+ */
+export const SYSTEM_PROMPT_WITH_TOOLS = `You are a source code analysis assistant.
+You analyze source code and extract structured information about screens,
+state variations, and navigation transitions.
+
+You have access to three tools for exploring the repository on demand:
+- readFile(path): read the full text of a single file.
+- searchFiles(pattern): list paths matching a glob pattern.
+- grepFiles(query, glob?): search previously-read files for a substring.
+
+Use these tools whenever you need code that is not already shown in the
+prompt. Prefer reading only the files you actually need — you do NOT have to
+read every file. When you have enough information, produce the final answer.
+
+IMPORTANT: Your FINAL response — after any tool calls — must be ONLY valid
+JSON. No markdown fences, no explanatory text before or after the JSON.`;
+
 // ---------------------------------------------------------------------------
 // Turn 1 — Route / screen extraction
 // ---------------------------------------------------------------------------
@@ -681,4 +702,134 @@ Only include transitions between the known screens listed above.
 Return a JSON array. If no transitions are found, return an empty array [].
 
 ${filesSection}`;
+}
+
+// ---------------------------------------------------------------------------
+// Tool-driven prompt builders
+//
+// These variants provide the model with file LISTINGS rather than full
+// contents, and instruct it to fetch the contents it needs via the
+// `readFile` / `searchFiles` / `grepFiles` tools. Designed for use with
+// `SYSTEM_PROMPT_WITH_TOOLS`.
+// ---------------------------------------------------------------------------
+
+/** Truncate a path list so prompts stay bounded on huge repos. */
+function formatPathList(paths: string[], max: number): string {
+  if (paths.length <= max) {
+    return paths.map((p) => `- ${p}`).join("\n");
+  }
+  const head = paths.slice(0, max).map((p) => `- ${p}`);
+  head.push(
+    `- ...and ${paths.length - max} more (use searchFiles to explore).`,
+  );
+  return head.join("\n");
+}
+
+/**
+ * Turn 1 prompt variant: instructs the model to inspect the candidate routing
+ * files using the tools and extract screens. Only path listings are embedded.
+ */
+export function buildTurn1PromptWithTools(
+  framework: string,
+  routingFilePaths: string[],
+): string {
+  const listing = formatPathList(routingFilePaths, 200);
+
+  return `Analyze the routing/navigation definitions of this ${framework} repository and extract every screen / route.
+
+The candidate routing files are listed below. Use the \`readFile\` tool to open the ones you need. If the listing is incomplete, use \`searchFiles\` (e.g. "app/**/page.tsx", "src/**/routes*.ts") to find more. Use \`grepFiles\` to locate specific routing calls inside files you have already read.
+
+Candidate routing files:
+${listing || "- (none detected — use searchFiles to discover them)"}
+
+For each screen return a JSON object with these fields:
+- "id": unique snake_case identifier prefixed with "screen_" (e.g. "screen_dashboard")
+- "path": URL route path (e.g. "/dashboard")
+- "componentFile": the component file path referenced in the route definition
+- "label": short human-readable name
+- "description": brief description of what the screen does
+
+Return a JSON array of screen objects. Example:
+[
+  {
+    "id": "screen_home",
+    "path": "/",
+    "componentFile": "app/page.tsx",
+    "label": "Home",
+    "description": "Landing page"
+  }
+]
+
+When you have gathered enough information, emit ONLY the JSON array as your final answer.`;
+}
+
+/**
+ * Turn 2 prompt variant: tells the model to read a single component file via
+ * `readFile` and extract state variants.
+ */
+export function buildTurn2PromptWithTools(
+  screenId: string,
+  componentFile: string,
+): string {
+  return `Analyze the component file for screen "${screenId}" and extract all state variants.
+
+Use the \`readFile\` tool to open: ${componentFile}
+
+If relevant state lives in imported modules, follow the imports with additional \`readFile\` calls. Use \`grepFiles\` to locate specific state patterns.
+
+Look for:
+- Loading states (spinners, skeletons, suspense)
+- Error states (error boundaries, caught errors, error UI)
+- Empty states (no-data placeholders)
+- Authentication-required / permission-based rendering
+- Responsive variants
+- Other conditional rendering (feature flags, A/B tests)
+
+For each variant return:
+- "id": unique snake_case identifier (e.g. "variant_loading_${screenId}")
+- "label": human-readable name
+- "condition": when this variant appears
+- "type": one of "loading" | "error" | "empty" | "auth_required" | "permission" | "responsive" | "conditional"
+
+Return a JSON array. If no variants are found, return [].
+
+Once finished, emit ONLY the JSON array as your final answer.`;
+}
+
+/**
+ * Turn 3 prompt variant: instructs the model to explore the component files
+ * via the tools and extract screen-to-screen transitions.
+ */
+export function buildTurn3PromptWithTools(
+  screens: { id: string; path: string }[],
+  componentFilePaths: string[],
+): string {
+  const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
+  const listing = formatPathList(componentFilePaths, 300);
+
+  return `Extract all screen-to-screen transitions (navigations) in this codebase.
+
+Known screens:
+${screenList}
+
+Component files available for inspection:
+${listing || "- (none — use searchFiles to find them)"}
+
+Use the tools to investigate. Some suggestions:
+- \`grepFiles("navigate")\`, \`grepFiles("router.push")\`, \`grepFiles("href=")\`, etc. to find navigation call sites.
+- \`readFile(...)\` on files that contain navigation calls.
+- \`searchFiles(...)\` when you suspect additional files exist.
+
+For each transition return:
+- "id": unique snake_case identifier (e.g. "transition_home_to_login")
+- "from": source screen id (must match one of the known screens)
+- "to": target screen id (must match one of the known screens)
+- "trigger": what triggers the navigation (e.g. "Click login button")
+- "method": the code method used (e.g. "router.push", "Link", "navigate")
+- "condition": (optional) any condition that must be true
+
+Only include transitions between the known screens listed above.
+Return a JSON array. If none are found, return [].
+
+When finished, emit ONLY the JSON array as your final answer.`;
 }
