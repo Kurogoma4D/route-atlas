@@ -5,6 +5,11 @@
  * Each prompt asks the LLM to return strictly valid JSON so the result
  * can be parsed deterministically.
  *
+ * Flow B (issue #90): prompts include **file paths only** — the LLM pulls
+ * the actual contents through the `readFile` / `searchFiles` / `grepFiles`
+ * tools exposed by the pipeline. The snippet helpers at the bottom of the
+ * file are kept for callers that still need them (and their tests).
+ *
  * Reference: SPEC.md §5.4
  */
 
@@ -26,8 +31,29 @@ export const SYSTEM_PROMPT = `You are a source code analysis assistant.
 You analyze source code and extract structured information about screens,
 state variations, and navigation transitions.
 
-IMPORTANT: Always respond with ONLY valid JSON — no markdown fences, no
-explanatory text before or after the JSON.`;
+You have three tools to fetch repository content on demand:
+- readFile(path): returns the contents of a single file at the given repo path.
+- searchFiles(pattern): returns repo paths matching a glob (e.g. "src/**/*.tsx").
+- grepFiles(query, glob?): full-text / code search over the repository.
+
+Read only the files you actually need. It is cheaper and more accurate to
+inspect a handful of targeted files than to try to enumerate the whole repo.
+
+IMPORTANT: After you finish using tools, respond with ONLY valid JSON —
+no markdown fences, no explanatory text before or after the JSON.`;
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+/** Render a bullet list of file paths, capped so the prompt stays compact. */
+function formatPathList(paths: string[], max = 200): string {
+  if (paths.length === 0) return "(none provided)";
+  const shown = paths.slice(0, max);
+  const extra = paths.length - shown.length;
+  const body = shown.map((p) => `- ${p}`).join("\n");
+  return extra > 0 ? `${body}\n…and ${extra} more` : body;
+}
 
 // ---------------------------------------------------------------------------
 // Turn 1 — Route / screen extraction
@@ -35,12 +61,8 @@ explanatory text before or after the JSON.`;
 
 export function buildTurn1Prompt(
   framework: string,
-  routingFiles: { path: string; content: string }[],
+  routingFilePaths: string[],
 ): string {
-  const filesSection = routingFiles
-    .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join("\n\n");
-
   const isPlainHtml = framework === "plain-html";
   const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
@@ -52,7 +74,7 @@ export function buildTurn1Prompt(
 
   if (isReactNative) {
     if (framework === "expo-router") {
-      frameworkInstructions = `Analyze the following Expo Router files and extract every screen / route.
+      frameworkInstructions = `Analyze the Expo Router files listed below and extract every screen / route.
 
 For Expo Router projects (file-based routing similar to Next.js App Router):
 - Each file under app/ represents a route. The file path maps to the URL route (e.g. app/(tabs)/home.tsx -> /home, app/profile/[id].tsx -> /profile/[id]).
@@ -64,7 +86,7 @@ For Expo Router projects (file-based routing similar to Next.js App Router):
 Use the file-based route path as the "path" (e.g. "/", "/home", "/profile/[id]").
 Set "componentFile" to the .tsx/.jsx file path.`;
     } else {
-      frameworkInstructions = `Analyze the following React Navigation files and extract every screen / route.
+      frameworkInstructions = `Analyze the React Navigation files listed below and extract every screen / route.
 
 For React Navigation projects (v5+):
 - createStackNavigator(), createNativeStackNavigator() define stack-based navigation.
@@ -84,7 +106,7 @@ Set "componentFile" to the .tsx/.jsx file path containing the screen component.`
           ? "auto_route (@RoutePage() annotations, AutoRouter definitions)"
           : "Navigator 1.0 (MaterialApp routes / onGenerateRoute)";
 
-    frameworkInstructions = `Analyze the following Flutter ${flutterLibLabel} files and extract every screen / route.
+    frameworkInstructions = `Analyze the Flutter ${flutterLibLabel} files listed below and extract every screen / route.
 
 For Flutter projects, identify screens from:
 - go_router: GoRoute(path: '...', builder: ...) and ShellRoute / StatefulShellRoute definitions
@@ -95,7 +117,7 @@ Use the route path string as the "path" (e.g. "/home", "/user/:id").
 For Navigator 1.0 named routes, use the route name (e.g. "/settings").
 Set "componentFile" to the .dart file path containing the screen widget.`;
   } else if (framework === "tanstack-router") {
-    frameworkInstructions = `Analyze the following TanStack Router files and extract every screen / route.
+    frameworkInstructions = `Analyze the TanStack Router files listed below and extract every screen / route.
 
 For TanStack Router projects:
 - createFileRoute('/path') defines file-based routes where the path argument is the route path.
@@ -111,7 +133,7 @@ For TanStack Router projects:
 Use the route path as the "path" (e.g. "/", "/about", "/posts/$postId").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (framework === "gatsby") {
-    frameworkInstructions = `Analyze the following Gatsby page files and extract every screen / route.
+    frameworkInstructions = `Analyze the Gatsby page files listed below and extract every screen / route.
 
 For Gatsby projects (file-based routing similar to Next.js Pages Router):
 - Each file under src/pages/ represents a route. The file path maps to the URL route (e.g. src/pages/index.tsx -> /, src/pages/about.tsx -> /about, src/pages/blog/index.tsx -> /blog).
@@ -122,7 +144,7 @@ For Gatsby projects (file-based routing similar to Next.js Pages Router):
 Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (isAstro) {
-    frameworkInstructions = `Analyze the following Astro page files and extract every screen / route.
+    frameworkInstructions = `Analyze the Astro page files listed below and extract every screen / route.
 
 For Astro projects (file-based routing):
 - Each file under src/pages/ represents a route. The file path maps to the URL route (e.g. src/pages/index.astro -> /, src/pages/about.astro -> /about, src/pages/blog/[slug].astro -> /blog/:slug).
@@ -135,7 +157,7 @@ For Astro projects (file-based routing):
 Use the file-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the .astro/.md/.mdx/.tsx/.jsx file path.`;
   } else if (framework === "solid-start") {
-    frameworkInstructions = `Analyze the following SolidStart routing files and extract every screen / route.
+    frameworkInstructions = `Analyze the SolidStart routing files listed below and extract every screen / route.
 
 For SolidStart projects (file-based routing similar to SvelteKit):
 - Each file under src/routes/ represents a route. The file path maps to the URL route (e.g. src/routes/index.tsx -> /, src/routes/about.tsx -> /about, src/routes/users/[id].tsx -> /users/:id).
@@ -148,7 +170,7 @@ For SolidStart projects (file-based routing similar to SvelteKit):
 Use the file-based route path as the "path" (e.g. "/", "/about", "/users/:id").
 Set "componentFile" to the .tsx/.jsx/.ts/.js file path.`;
   } else if (framework === "qwik-city") {
-    frameworkInstructions = `Analyze the following Qwik City routing files and extract every screen / route.
+    frameworkInstructions = `Analyze the Qwik City routing files listed below and extract every screen / route.
 
 For Qwik City projects (directory-based routing):
 - Each directory under src/routes/ with an index.tsx represents a route. The directory path maps to the URL route (e.g. src/routes/index.tsx -> /, src/routes/about/index.tsx -> /about, src/routes/blog/[slug]/index.tsx -> /blog/:slug).
@@ -162,7 +184,7 @@ For Qwik City projects (directory-based routing):
 Use the directory-based route path as the "path" (e.g. "/", "/about", "/blog/:slug").
 Set "componentFile" to the index.tsx/.jsx/.ts/.js file path.`;
   } else if (isEmberFramework(framework)) {
-    frameworkInstructions = `Analyze the following Ember.js routing files and extract every screen / route.
+    frameworkInstructions = `Analyze the Ember.js routing files listed below and extract every screen / route.
 
 For Ember.js projects (convention-based routing):
 - app/router.js (or app/router.ts) contains route definitions using this.route('name', ...) inside Router.map(function() { ... }).
@@ -176,11 +198,11 @@ For Ember.js projects (convention-based routing):
 Use the route path as the "path" (e.g. "/", "/about", "/posts/:post_id").
 Set "componentFile" to the route file path (e.g. "app/routes/about.js") or the router file if no dedicated route file exists.`;
   } else if (isPlainHtml) {
-    frameworkInstructions = `Analyze the following plain HTML files. Each HTML file represents a screen.
+    frameworkInstructions = `Analyze the plain HTML files listed below. Each HTML file represents a screen.
 Use the file path prefixed with "/" as the URL route path (e.g. "about.html" becomes "/about.html", "contact/index.html" becomes "/contact/index.html").
 Set "componentFile" to the same HTML file path (without the leading "/").`;
   } else if (isAndroid) {
-    frameworkInstructions = `Analyze the following Android ${framework === "android-compose-navigation" ? "Jetpack Compose Navigation" : "Navigation Component"} files and extract every screen / destination.
+    frameworkInstructions = `Analyze the Android ${framework === "android-compose-navigation" ? "Jetpack Compose Navigation" : "Navigation Component"} files listed below and extract every screen / destination.
 
 For Android projects, identify screens from:
 - Navigation XML: <fragment>, <dialog>, <activity> elements with android:name and android:id attributes
@@ -192,7 +214,7 @@ Use the navigation destination route string as the "path" (e.g. "home", "setting
 For Activities without navigation routes, use the class name as the path (e.g. "MainActivity", "SettingsActivity").
 Set "componentFile" to the Kotlin/Java source file path.`;
   } else if (isIOS) {
-    frameworkInstructions = `Analyze the following iOS ${framework === "ios-swiftui" ? "SwiftUI" : "UIKit"} files and extract every screen / destination.
+    frameworkInstructions = `Analyze the iOS ${framework === "ios-swiftui" ? "SwiftUI" : "UIKit"} files listed below and extract every screen / destination.
 
 For iOS projects, identify screens from:
 - Storyboard XML: <viewController> and <scene> elements with storyboardIdentifier attributes
@@ -203,7 +225,7 @@ For iOS projects, identify screens from:
 Use the Storyboard ID, SwiftUI navigation destination value, or class name as the "path" (e.g. "HomeView", "SettingsViewController", "profileDetail").
 Set "componentFile" to the .swift, .m, or .storyboard file path.`;
   } else {
-    frameworkInstructions = `Analyze the following ${framework} routing files and extract every screen / route.`;
+    frameworkInstructions = `Analyze the ${framework} routing files listed below and extract every screen / route.`;
   }
 
   const exampleComponentFile = isReactNative
@@ -224,7 +246,14 @@ Set "componentFile" to the .swift, .m, or .storyboard file path.`;
                 ? "app/routes/index.js"
                 : "app/page.tsx";
 
+  const paths = formatPathList(routingFilePaths);
+
   return `${frameworkInstructions}
+
+To inspect any of these files call the \`readFile\` tool with the path. Use
+\`searchFiles\` or \`grepFiles\` only if the routing-file list is incomplete
+and you need to locate extra definitions (e.g. a root route file that is
+\`import\`ed from a listed file).
 
 For each screen return a JSON object with these fields:
 - "id": a unique snake_case identifier prefixed with "screen_" (e.g. "screen_dashboard")
@@ -244,7 +273,8 @@ Return a JSON array of screen objects. Example:
   }
 ]
 
-${filesSection}`;
+### Routing file paths
+${paths}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +284,6 @@ ${filesSection}`;
 export function buildTurn2Prompt(
   screenId: string,
   componentFile: string,
-  componentSource: string,
   framework: FrameworkName,
 ): string {
   const isAstro = isAstroFramework(framework);
@@ -324,7 +353,11 @@ export function buildTurn2Prompt(
 - Other conditional rendering (feature flags, A/B tests)`;
   }
 
-  return `Analyze the following component source code for screen "${screenId}" and extract all state variants.
+  return `Analyze screen "${screenId}" (component file \`${componentFile}\`) and extract all state variants.
+
+Start by calling \`readFile\` with the path above. If the component composes
+child components that clearly hold state branches, you MAY read those too —
+prefer \`grepFiles\` / \`searchFiles\` to locate them before \`readFile\`.
 
 Look for:
 ${lookForItems}
@@ -335,21 +368,16 @@ For each variant return:
 - "condition": description of when this variant appears
 - "type": one of "loading" | "error" | "empty" | "auth_required" | "permission" | "responsive" | "conditional"
 
-Return a JSON array. If no variants are found, return an empty array [].
-
-### File: ${componentFile}
-\`\`\`
-${componentSource}
-\`\`\``;
+Return a JSON array. If no variants are found, return an empty array [].`;
 }
 
 // ---------------------------------------------------------------------------
-// Snippet extraction for Turn 3 token reduction
+// Snippet extraction helpers (retained for callers outside the pipeline)
 // ---------------------------------------------------------------------------
 
 /**
  * Return regex patterns that match navigation-related code for the given framework.
- * These are derived from the Turn 3 `lookForItems` lists.
+ * Kept exported because consumers and tests still rely on these patterns.
  */
 export function getNavigationPatterns(framework: FrameworkName): RegExp[] {
   if (isReactNativeFramework(framework)) {
@@ -519,25 +547,15 @@ export function extractRelevantSnippets(
 // ---------------------------------------------------------------------------
 
 export function buildTurn3Prompt(
-  screens: { id: string; path: string }[],
-  allComponentSources: { path: string; content: string }[],
+  screens: { id: string; path: string; componentFile: string }[],
+  componentFilePaths: string[],
   framework: FrameworkName,
 ): string {
-  const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
+  const screenList = screens
+    .map((s) => `- ${s.id} (${s.path}) — ${s.componentFile}`)
+    .join("\n");
 
-  // Extract only navigation-relevant snippets to reduce token usage
-  const navPatterns = getNavigationPatterns(framework);
-  const snippetFiles: { path: string; content: string }[] = [];
-  for (const f of allComponentSources) {
-    const snippet = extractRelevantSnippets(f.content, navPatterns);
-    if (snippet !== null) {
-      snippetFiles.push({ path: f.path, content: snippet });
-    }
-  }
-
-  const filesSection = snippetFiles
-    .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join("\n\n");
+  const paths = formatPathList(componentFilePaths);
 
   const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
@@ -661,10 +679,19 @@ export function buildTurn3Prompt(
                       ? `"LinkTo", "transitionTo", "replaceWith", "router.transitionTo"`
                       : `"Link", "router.push", "window.location"`;
 
-  return `Analyze the following component source code excerpts (showing only navigation-related sections) and extract all screen-to-screen transitions (navigations).
+  return `Extract all screen-to-screen transitions (navigations) in the codebase.
 
-Known screens:
+Known screens (id / path / componentFile):
 ${screenList}
+
+Strategy:
+1. Start with the component files for the screens above — call \`readFile\`
+   for each one whose navigation behaviour you need to inspect.
+2. Use \`grepFiles\` with keywords from the "Look for" list (e.g. \`useNavigate\`,
+   \`router.push\`, \`NavigationLink\`) to locate transitions that live in shared
+   helpers, hooks, or layout files.
+3. Use \`searchFiles\` to enumerate a subdirectory if grep returns nothing.
+4. Only include transitions between the known screens listed above.
 
 Look for:
 ${lookForItems}
@@ -677,8 +704,8 @@ For each transition return:
 - "method": the code method used (e.g. ${methodExamples})
 - "condition": (optional) any condition that must be true for the transition to occur
 
-Only include transitions between the known screens listed above.
 Return a JSON array. If no transitions are found, return an empty array [].
 
-${filesSection}`;
+### Candidate source file paths (prefer these when browsing)
+${paths}`;
 }

@@ -390,13 +390,6 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     });
 
     const routingEntries = filterFilesByPatterns(allFiles, routingFilePatterns);
-    const routingFiles = await fetchFileContents(
-      owner,
-      repo,
-      routingEntries,
-      token,
-      { maxFiles: 50 },
-    );
 
     // Fetch component files -- file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
@@ -446,21 +439,18 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    const componentFiles = await fetchFileContents(
-      owner,
-      repo,
-      componentEntries,
-      token,
-      { maxFiles: 50 },
-    );
+    // Flow B — we hand the pipeline file *paths* and let Copilot pull the
+    // actual bytes through the readFile / searchFiles / grepFiles tools.
+    const routingFilePaths = routingEntries.map((f) => f.path);
+    const componentFilePaths = componentEntries.map((f) => f.path);
 
     // Send file count metadata
     await jobStore.sendProgress(jobId, {
       step: "fetching_files",
-      message: "ファイルを取得しました",
+      message: "ファイル一覧を取得しました",
       metadata: {
-        routingFileCount: routingFiles.length,
-        componentFileCount: componentFiles.length,
+        routingFileCount: routingFilePaths.length,
+        componentFileCount: componentFilePaths.length,
       },
     });
 
@@ -475,8 +465,13 @@ async function runPipeline(params: PipelineParams): Promise<void> {
 
     const result = await pipeline.run({
       framework,
-      routingFiles,
-      componentFiles,
+      owner,
+      repo,
+      ref: branch,
+      token,
+      files: allFiles,
+      routingFilePaths,
+      componentFilePaths,
       model,
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {
