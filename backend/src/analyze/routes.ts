@@ -390,13 +390,6 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     });
 
     const routingEntries = filterFilesByPatterns(allFiles, routingFilePatterns);
-    const routingFiles = await fetchFileContents(
-      owner,
-      repo,
-      routingEntries,
-      token,
-      { maxFiles: 50 },
-    );
 
     // Fetch component files -- file extensions depend on the platform
     const isAndroidProject = isAndroidFramework(framework);
@@ -446,13 +439,21 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    const componentFiles = await fetchFileContents(
-      owner,
-      repo,
-      componentEntries,
-      token,
-      { maxFiles: 50 },
-    );
+    // Tool mode is always active in this route (we pass `repoContext` below),
+    // so the pipeline only consumes the `path` field of these entries — it
+    // never reads `content` for routing or component files. Pass path-only
+    // records to avoid ~100 blanket Contents API calls per analysis. If a
+    // legacy (non-tool) fallback is ever re-introduced here, derive the
+    // branch from the same condition that controls `repoContext` so the two
+    // cannot drift apart.
+    const routingFiles = routingEntries.map((e) => ({
+      path: e.path,
+      content: "",
+    }));
+    const componentFiles = componentEntries.map((e) => ({
+      path: e.path,
+      content: "",
+    }));
 
     // Send file count metadata
     await jobStore.sendProgress(jobId, {
@@ -478,6 +479,16 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       routingFiles,
       componentFiles,
       model,
+      // Delegate file lookups to Copilot via custom tools — see Issue #90.
+      // The LLM pulls files on demand from the repo tree instead of relying
+      // on full contents embedded in each prompt.
+      repoContext: {
+        owner,
+        repo,
+        branch,
+        token,
+        treeFiles: allFiles,
+      },
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {
           void jobStore.sendProgress(jobId, {
