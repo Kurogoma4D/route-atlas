@@ -154,7 +154,7 @@ describe("AnalysisPipeline", () => {
     const result = await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
     });
 
     expect(result.framework).toBe("angular");
@@ -166,7 +166,7 @@ describe("AnalysisPipeline", () => {
     const result = await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
     });
 
     const ids = result.screens.map((s) => s.id);
@@ -179,7 +179,7 @@ describe("AnalysisPipeline", () => {
     const result = await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
     });
 
     const home = result.screens.find((s) => s.id === "screen_home")!;
@@ -198,7 +198,7 @@ describe("AnalysisPipeline", () => {
     const result = await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
     });
 
     expect(result.transitions).toHaveLength(1);
@@ -214,7 +214,7 @@ describe("AnalysisPipeline", () => {
     await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
       onProgress: (stage) => {
         stages.push(stage);
       },
@@ -227,7 +227,7 @@ describe("AnalysisPipeline", () => {
     await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
     });
 
     // All calls should use the default model
@@ -240,7 +240,7 @@ describe("AnalysisPipeline", () => {
     await pipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
       model: "claude-sonnet-4",
     });
 
@@ -262,32 +262,32 @@ describe("AnalysisPipeline", () => {
     const result = await fencedPipeline.run({
       framework: "angular",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: SAMPLE_COMPONENT_FILES,
+      componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
     });
 
     expect(result.screens).toHaveLength(3);
   });
 
-  it("assigns empty variants when component source is not found", async () => {
-    const adapterWithMissing = createMockAdapter([
+  it("treats an empty Turn 2 response as no variants", async () => {
+    const adapterWithEmpty = createMockAdapter([
       JSON.stringify([
         {
           id: "screen_missing",
           path: "/missing",
           componentFile: "src/app/does-not-exist.ts",
           label: "Missing",
-          description: "Component file not in input",
+          description: "Component file not reachable",
         },
       ]),
-      // No Turn 2 call for this screen since source is missing
+      JSON.stringify([]), // Turn 2 — LLM reports no variants
       JSON.stringify([]), // Turn 3
     ]);
-    const missingPipeline = new AnalysisPipeline(adapterWithMissing);
+    const missingPipeline = new AnalysisPipeline(adapterWithEmpty);
 
     const result = await missingPipeline.run({
       framework: "react-router",
       routingFiles: [SAMPLE_ROUTING_FILE],
-      componentFiles: [], // no component files provided
+      componentFilePaths: [],
     });
 
     expect(result.screens[0]!.variants).toEqual([]);
@@ -301,7 +301,7 @@ describe("AnalysisPipeline", () => {
       badPipeline.run({
         framework: "angular",
         routingFiles: [SAMPLE_ROUTING_FILE],
-        componentFiles: SAMPLE_COMPONENT_FILES,
+        componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
       }),
     ).rejects.toThrow(); // SyntaxError from JSON.parse
   });
@@ -314,7 +314,7 @@ describe("AnalysisPipeline", () => {
       badPipeline.run({
         framework: "angular",
         routingFiles: [SAMPLE_ROUTING_FILE],
-        componentFiles: SAMPLE_COMPONENT_FILES,
+        componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
       }),
     ).rejects.toThrow("failed runtime validation");
   });
@@ -332,7 +332,7 @@ describe("AnalysisPipeline", () => {
       errorPipeline.run({
         framework: "angular",
         routingFiles: [SAMPLE_ROUTING_FILE],
-        componentFiles: SAMPLE_COMPONENT_FILES,
+        componentFilePaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
       }),
     ).rejects.toThrow("Copilot API unavailable");
   });
