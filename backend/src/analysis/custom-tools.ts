@@ -154,6 +154,7 @@ async function fetchFileViaContentsApi(
 export async function readFileImpl(
   context: RepositoryContext,
   path: string,
+  treeByPath?: Map<string, TreeEntry>,
 ): Promise<ToolResultObject> {
   if (!path || typeof path !== "string") {
     return failure(
@@ -165,7 +166,11 @@ export async function readFileImpl(
   // Contents API limit, we go straight to the Blob API via its SHA — this also
   // avoids a redundant 403-then-fallback round-trip.
   const normalized = path.replace(/^\.\//, "");
-  const entry = context.fileTree.find((e) => e.path === normalized);
+  // Prefer the pre-built O(1) index when `createCustomTools` supplies it;
+  // fall back to a linear scan for direct callers (e.g. tests).
+  const entry = treeByPath
+    ? treeByPath.get(normalized)
+    : context.fileTree.find((e) => e.path === normalized);
 
   let content: string;
   try {
@@ -337,6 +342,13 @@ export async function grepFilesImpl(
  * session level via `approveAll`).
  */
 export function createCustomTools(context: RepositoryContext): Tool[] {
+  // Build a path -> TreeEntry index once per session so `readFile` lookups
+  // are O(1) instead of O(n) on the file tree. On repos with hundreds of
+  // thousands of entries this matters across many tool-call rounds.
+  const treeByPath = new Map<string, TreeEntry>(
+    context.fileTree.map((entry) => [entry.path, entry]),
+  );
+
   return [
     {
       name: "readFile",
@@ -361,7 +373,7 @@ export function createCustomTools(context: RepositoryContext): Tool[] {
             "readFile: 'path' argument is required and must be a non-empty string.",
           );
         }
-        return readFileImpl(context, path);
+        return readFileImpl(context, path, treeByPath);
       },
     },
     {

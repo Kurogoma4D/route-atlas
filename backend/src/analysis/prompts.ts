@@ -540,10 +540,24 @@ export function buildTurn3Prompt(
 ): string {
   const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
 
-  const filesSection =
-    componentFilePaths.length > 0
-      ? componentFilePaths.map((p) => `- ${p}`).join("\n")
-      : "(no candidate component files)";
+  // Cap paths rendered into the prompt so the Turn 3 request stays within the
+  // model's token budget even when the caller passes a large candidate list.
+  // The LLM can still discover additional files via `searchFiles`/`grepFiles`.
+  const TURN3_PROMPT_PATH_LIMIT = 30;
+  const filesSection = (() => {
+    if (componentFilePaths.length === 0) {
+      return "(no candidate component files)";
+    }
+    if (componentFilePaths.length <= TURN3_PROMPT_PATH_LIMIT) {
+      return componentFilePaths.map((p) => `- ${p}`).join("\n");
+    }
+    const shown = componentFilePaths
+      .slice(0, TURN3_PROMPT_PATH_LIMIT)
+      .map((p) => `- ${p}`)
+      .join("\n");
+    const remaining = componentFilePaths.length - TURN3_PROMPT_PATH_LIMIT;
+    return `${shown}\n…and ${remaining} more — use searchFiles/grepFiles to discover additional paths.`;
+  })();
 
   const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);

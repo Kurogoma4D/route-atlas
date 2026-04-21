@@ -147,6 +147,13 @@ export class AnalysisPipeline {
     // and the same repository context.
     const tools = createCustomTools(input.repositoryContext);
     const componentPathSet = new Set(input.componentFilePaths);
+    // Full repo path index for the widened Turn 2 admission check below.
+    // A component file may be present in the repo but not in the
+    // pre-computed candidate list (e.g. because the LLM picked a file the
+    // heuristic filters dropped, or supplied a path with a leading "./").
+    const repoPathSet = new Set(
+      input.repositoryContext.fileTree.map((entry) => entry.path),
+    );
 
     const conversationHistory: ChatMessage[] = [
       { role: "system", content: SYSTEM_PROMPT },
@@ -198,19 +205,31 @@ export class AnalysisPipeline {
       adapter: LLMAdapter,
       rawScreen: RawScreen,
       knownComponentPaths: Set<string>,
+      knownRepoPaths: Set<string>,
       baseMessages: ChatMessage[],
       selectedModel: string,
     ): Promise<Screen> {
       let variants: Variant[] = [];
 
       // Only issue a Turn 2 call when the LLM identified a component file.
-      // If the component path is entirely unknown to the file tree we skip
-      // the turn — mirroring the previous behaviour of returning empty
-      // variants when no source was available.
-      if (
-        rawScreen.componentFile &&
-        knownComponentPaths.has(rawScreen.componentFile)
-      ) {
+      // Accept the path if it is a known candidate, a known repo file, or
+      // either of those after stripping a leading "./". If the path is truly
+      // unknown we skip the turn — `readFile` would otherwise fail anyway,
+      // but skipping avoids a wasted round-trip. Paths that exist in the
+      // repo but aren't in the candidate list are still tried — `readFile`
+      // will handle the content fetch and fail gracefully if the file has
+      // since moved.
+      const componentFile = rawScreen.componentFile;
+      const normalizedComponentFile = componentFile?.replace(/^\.\//, "");
+      const shouldCallTurn2 =
+        !!componentFile &&
+        !!normalizedComponentFile &&
+        (knownComponentPaths.has(componentFile) ||
+          knownComponentPaths.has(normalizedComponentFile) ||
+          knownRepoPaths.has(componentFile) ||
+          knownRepoPaths.has(normalizedComponentFile));
+
+      if (shouldCallTurn2) {
         const turn2Prompt = buildTurn2Prompt(
           rawScreen.id,
           rawScreen.componentFile,
@@ -240,6 +259,7 @@ export class AnalysisPipeline {
             this.adapter,
             screen,
             componentPathSet,
+            repoPathSet,
             turn1Context,
             model,
           ),

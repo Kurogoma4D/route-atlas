@@ -440,7 +440,14 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    const componentFilePaths = componentEntries.map((e) => e.path);
+    // Cap the candidate list at 50 (same limit that the previous pre-fetch
+    // path used via `fetchFileContents({ maxFiles: 50 })`) so Turn 3 prompt
+    // size stays bounded. The LLM can expand beyond this via
+    // `searchFiles` / `grepFiles` at tool-call time if needed.
+    const COMPONENT_FILE_PATHS_CAP = 50;
+    const componentFilePaths = componentEntries
+      .slice(0, COMPONENT_FILE_PATHS_CAP)
+      .map((e) => e.path);
 
     // Send file count metadata.
     // With tool-driven file exploration we no longer pre-fetch file contents;

@@ -253,6 +253,80 @@ describe("AnalysisPipeline", () => {
     expect(result.screens).toHaveLength(3);
   });
 
+  it("issues a Turn 2 call when the component file is in the repo tree but not in the candidate list", async () => {
+    // The LLM may pick a component file that our heuristic filter dropped
+    // (e.g. a .ts file outside the narrower candidate set). As long as the
+    // file exists in the repository we should still run Turn 2.
+    const orphanPath = "src/app/orphan.component.ts";
+    const turn1ResponseOrphan = JSON.stringify([
+      {
+        id: "screen_orphan",
+        path: "/orphan",
+        componentFile: orphanPath,
+        label: "Orphan",
+        description: "Component file outside candidate list",
+      },
+    ]);
+    const turn2OrphanResponse = JSON.stringify([
+      {
+        id: "variant_default_orphan",
+        label: "Default",
+        condition: "Always",
+        type: "default",
+      },
+    ]);
+    const orphanAdapter = createMockAdapter([
+      turn1ResponseOrphan,
+      turn2OrphanResponse,
+      JSON.stringify([]), // Turn 3
+    ]);
+    const orphanPipeline = new AnalysisPipeline(orphanAdapter);
+
+    const result = await orphanPipeline.run(
+      baseInput({
+        componentFilePaths: [], // not a candidate
+        repositoryContext: {
+          ...SAMPLE_REPOSITORY_CONTEXT,
+          // but present in the repo tree
+          fileTree: [
+            ...SAMPLE_REPOSITORY_CONTEXT.fileTree,
+            makeTreeEntry(orphanPath),
+          ],
+        },
+      }),
+    );
+
+    // 3 calls == Turn 1 + Turn 2 (for orphan) + Turn 3
+    expect(orphanAdapter.calls).toHaveLength(3);
+    expect(result.screens[0]!.variants).toHaveLength(1);
+    expect(result.screens[0]!.variants[0]!.type).toBe("default");
+  });
+
+  it("accepts a componentFile with a leading './' when normalization matches the tree", async () => {
+    const turn1ResponseDotSlash = JSON.stringify([
+      {
+        id: "screen_home",
+        path: "/",
+        // LLM may emit paths with a leading "./"
+        componentFile: "./src/app/home.component.ts",
+        label: "Home",
+        description: "Home",
+      },
+    ]);
+    const dotSlashAdapter = createMockAdapter([
+      turn1ResponseDotSlash,
+      TURN2_HOME_RESPONSE,
+      JSON.stringify([]), // Turn 3
+    ]);
+    const dotSlashPipeline = new AnalysisPipeline(dotSlashAdapter);
+
+    const result = await dotSlashPipeline.run(baseInput());
+
+    // Turn 1 + Turn 2 + Turn 3
+    expect(dotSlashAdapter.calls).toHaveLength(3);
+    expect(result.screens[0]!.variants).toHaveLength(1);
+  });
+
   it("assigns empty variants when the component file is not in the tree", async () => {
     const adapterWithMissing = createMockAdapter([
       JSON.stringify([
