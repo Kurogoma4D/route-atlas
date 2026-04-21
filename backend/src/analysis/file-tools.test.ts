@@ -350,6 +350,20 @@ describe("createGrepFilesTool", () => {
     expect(result).toContain("No matches");
   });
 
+  it("reports 'No matches' when the preloadedContents map is empty", () => {
+    // Default makeCtx() yields an empty preloadedContents map, so the outer
+    // `for (…) of ctx.preloadedContents` loop body never executes. The handler
+    // must still return a well-formed "No matches" message (not blank output
+    // or an error).
+    const ctx = makeCtx();
+    expect(ctx.preloadedContents.size).toBe(0);
+    const tool = createGrepFilesTool(ctx);
+
+    const result = tool.handler({ query: "router.push" }, INVOCATION) as string;
+
+    expect(result).toContain("No matches");
+  });
+
   it("caps results at GREP_FILES_MAX_RESULTS", () => {
     const content = Array.from({ length: GREP_FILES_MAX_RESULTS + 20 })
       .map((_, i) => `line ${i} router.push('x');`)

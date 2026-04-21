@@ -770,8 +770,12 @@ When you have gathered enough information, emit ONLY the JSON array as your fina
  * repository could craft source that induces embedded newlines or prompt
  * injection into `screenId`. We restrict the shape to a small safe alphabet
  * before interpolating it into a subsequent prompt.
+ *
+ * Exported so that callers (e.g. the pipeline's Turn 3 preparation) can filter
+ * screens before embedding their ids into a prompt, independently of whether
+ * they went through Turn 2.
  */
-function isSafeScreenId(value: string): boolean {
+export function isSafeScreenId(value: string): boolean {
   return /^screen_[a-z0-9_]+$/.test(value);
 }
 
@@ -786,7 +790,31 @@ function isSafeComponentFile(value: string): boolean {
   // eslint-disable-next-line no-control-regex
   if (/[\x00-\x1f\x7f]/.test(value)) return false;
   // Minimal structural check: looks like a path (no backticks, no triple quotes).
+  // A single backtick alone can escape an inline-code span in the Turn 2
+  // prompt (`readFile to open: ${componentFile}`), so reject it too.
   if (value.includes("```")) return false;
+  if (value.includes("`")) return false;
+  return true;
+}
+
+/**
+ * Validate that a value looks like a single-line URL route / path string.
+ *
+ * Used to sanitize the `path` field produced by Turn 1 (e.g. "/dashboard",
+ * "/users/[id]") before re-embedding it in the Turn 3 prompt. Without this,
+ * a malicious repository could craft routes containing embedded newlines or
+ * backticks that inject free-form instructions into the prompt.
+ *
+ * Exported so the pipeline can pre-filter screens before building the Turn 3
+ * prompt.
+ */
+export function isSafePath(value: string): boolean {
+  if (value.length === 0 || value.length > 500) return false;
+  // Reject ANY control characters (including \n, \r, \t, null, ...)
+  // eslint-disable-next-line no-control-regex
+  if (/[\x00-\x1f\x7f]/.test(value)) return false;
+  // Reject backticks (code-fence / inline-code escape).
+  if (value.includes("`")) return false;
   return true;
 }
 
@@ -840,12 +868,20 @@ Once finished, emit ONLY the JSON array as your final answer.`;
 /**
  * Turn 3 prompt variant: instructs the model to explore the component files
  * via the tools and extract screen-to-screen transitions.
+ *
+ * Both `screens[].id` and `screens[].path` are LLM-generated (they come from
+ * Turn 1 output) and must be sanitized before being interpolated into the
+ * prompt — a malicious repo could craft routes containing prompt-injection
+ * payloads. Screens whose id or path fail validation are silently skipped.
  */
 export function buildTurn3PromptWithTools(
   screens: { id: string; path: string }[],
   componentFilePaths: string[],
 ): string {
-  const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
+  const safeScreens = screens.filter(
+    (s) => isSafeScreenId(s.id) && isSafePath(s.path),
+  );
+  const screenList = safeScreens.map((s) => `- ${s.id} (${s.path})`).join("\n");
   const listing = formatPathList(componentFilePaths, 300);
 
   return `Extract all screen-to-screen transitions (navigations) in this codebase.

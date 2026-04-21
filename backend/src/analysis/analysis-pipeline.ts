@@ -239,25 +239,40 @@ export class AnalysisPipeline {
       );
       const componentInTree = fileTreePaths?.has(rawScreen.componentFile);
 
-      // In tool mode, proceed as long as the file exists somewhere — either in
-      // the preload cache (componentSource) or in the full file tree.
-      // In non-tool mode, only proceed when we already have the source.
-      const canAnalyze = turnTools
-        ? Boolean(componentSource) || Boolean(componentInTree)
-        : Boolean(componentSource);
-
       let variants: Variant[] = [];
+      let turn2Prompt: string | null = null;
 
-      if (canAnalyze) {
-        const turn2Prompt = turnTools
-          ? buildTurn2PromptWithTools(rawScreen.id, rawScreen.componentFile)
-          : buildTurn2Prompt(
+      // Build the Turn 2 prompt by branching explicitly so the compiler can
+      // narrow `componentSource` to non-null in the non-tool path (avoids the
+      // `!` non-null assertion). In tool mode, `buildTurn2PromptWithTools`
+      // validates the LLM-generated id/componentFile and throws on invalid
+      // input; we catch that per-screen so one bad Turn 1 entry cannot abort
+      // the whole analysis via Promise.all.
+      if (turnTools) {
+        if (componentSource || componentInTree) {
+          try {
+            turn2Prompt = buildTurn2PromptWithTools(
               rawScreen.id,
               rawScreen.componentFile,
-              componentSource!.content,
-              input.framework,
             );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.warn(
+              `[analysis-pipeline] Skipping Turn 2 for '${rawScreen.id}': ${message}`,
+            );
+            return { ...rawScreen, variants: [] };
+          }
+        }
+      } else if (componentSource) {
+        turn2Prompt = buildTurn2Prompt(
+          rawScreen.id,
+          rawScreen.componentFile,
+          componentSource.content,
+          input.framework,
+        );
+      }
 
+      if (turn2Prompt !== null) {
         const turn2Response = await adapter.chatCompletion({
           model: selectedModel,
           messages: [...baseMessages, { role: "user", content: turn2Prompt }],

@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { createApp } from "../server.js";
 import { JobStore, getInMemoryJobKV, resetInMemoryJobKV } from "./job-store.js";
 import { CopilotClientManager } from "../analysis/copilot-client.js";
+import { AnalysisPipeline } from "../analysis/analysis-pipeline.js";
 import { resetInMemoryKV } from "../auth/session.js";
 import type { LLMAdapter } from "../analysis/copilot-client.js";
 import type { KVLike } from "../auth/session.js";
@@ -695,6 +696,130 @@ describe("Analysis API routes", () => {
       expect(job).toBeDefined();
       expect(job!.status).toBe("complete");
       expect(detectiOSFrameworkMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("fileToolContext.fileTree filtering", () => {
+    it("restricts the tool-mode fileTree to routing + component entries only, dropping excluded paths", async () => {
+      // Override the file-fetcher mocks so the allFiles list contains a mix of:
+      //   - routing files (app/**/page.tsx)
+      //   - component files (*.tsx, *.ts)
+      //   - excluded paths (node_modules/, dist/)
+      //   - irrelevant extensions (*.png, *.md)
+      // Only the routing + component entries should survive into the
+      // `fileToolContext.fileTree` passed to AnalysisPipeline.run.
+      const fetcherMod = await import("../analysis/github-file-fetcher.js");
+      const fetchFileTreeMock = vi.mocked(fetcherMod.fetchFileTree);
+      fetchFileTreeMock.mockResolvedValueOnce({
+        files: [
+          {
+            path: "package.json",
+            type: "blob",
+            sha: "1",
+            mode: "100644",
+            url: "",
+          },
+          {
+            path: "app/page.tsx",
+            type: "blob",
+            sha: "2",
+            mode: "100644",
+            url: "",
+          },
+          {
+            path: "app/dashboard/page.tsx",
+            type: "blob",
+            sha: "3",
+            mode: "100644",
+            url: "",
+          },
+          {
+            path: "src/lib/helper.ts",
+            type: "blob",
+            sha: "4",
+            mode: "100644",
+            url: "",
+          },
+          // Excluded directory — should be dropped by isExcludedPath
+          {
+            path: "node_modules/lodash/index.js",
+            type: "blob",
+            sha: "5",
+            mode: "100644",
+            url: "",
+          },
+          {
+            path: "dist/bundle.js",
+            type: "blob",
+            sha: "6",
+            mode: "100644",
+            url: "",
+          },
+          // Irrelevant extensions — not in componentPatterns nor routingFilePatterns
+          {
+            path: "assets/logo.png",
+            type: "blob",
+            sha: "7",
+            mode: "100644",
+            url: "",
+          },
+          {
+            path: "README.md",
+            type: "blob",
+            sha: "8",
+            mode: "100644",
+            url: "",
+          },
+        ],
+        truncated: false,
+      });
+
+      // Spy on AnalysisPipeline.run to capture the input it receives so we can
+      // assert the fileTree was filtered correctly. Return a minimal result to
+      // let the pipeline finish normally.
+      const runSpy = vi
+        .spyOn(AnalysisPipeline.prototype, "run")
+        .mockResolvedValueOnce({
+          framework: "nextjs-app",
+          screens: [],
+          transitions: [],
+        });
+
+      const jar = await authenticateAgent(app);
+
+      const postRes = await requestWithCookies(app, "/api/analyze", jar, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ owner: "foo", repo: "bar", branch: "main" }),
+      });
+      const { jobId } = await postRes.json();
+
+      // Wait for the background pipeline
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const job = await jobStore.getJob(jobId);
+      expect(job!.status).toBe("complete");
+
+      // Assert on the single pipeline call's fileTree
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      const callArg = runSpy.mock.calls[0][0];
+      expect(callArg.fileToolContext).toBeDefined();
+      const treePaths = callArg.fileToolContext!.fileTree.map((e) => e.path);
+
+      // Routing + component files ARE included
+      expect(treePaths).toContain("app/page.tsx");
+      expect(treePaths).toContain("app/dashboard/page.tsx");
+      expect(treePaths).toContain("src/lib/helper.ts");
+
+      // Excluded directories are NOT included
+      expect(treePaths).not.toContain("node_modules/lodash/index.js");
+      expect(treePaths).not.toContain("dist/bundle.js");
+
+      // Irrelevant extensions (not matched by any pattern) are NOT included
+      expect(treePaths).not.toContain("assets/logo.png");
+      expect(treePaths).not.toContain("README.md");
+
+      runSpy.mockRestore();
     });
   });
 

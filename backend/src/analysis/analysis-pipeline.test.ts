@@ -567,6 +567,65 @@ describe("AnalysisPipeline tool-driven mode", () => {
     expect(adapter.calls).toHaveLength(2);
   });
 
+  it("returns empty variants (without crashing) when Turn 1 emits an unsafe screen id", async () => {
+    // Regression test for the iter-1 Turn 2 validator: if Turn 1 returns a
+    // screen whose `id` fails `isSafeScreenId` (e.g. uppercase letter) but
+    // whose `componentFile` IS in the file tree, the old code would call
+    // `buildTurn2PromptWithTools`, hit the validator throw, and the exception
+    // would propagate through Promise.all and abort the ENTIRE analysis job.
+    // The pipeline must now catch per-screen and fall back to `variants: []`.
+    const adapter = createMockAdapter([
+      // Turn 1: one invalid-id screen and one valid screen. The invalid one
+      // references a file that IS in the tree, so the old canAnalyze branch
+      // would try to build a Turn 2 prompt and throw.
+      JSON.stringify([
+        {
+          id: "screen_Invalid", // uppercase => fails isSafeScreenId
+          path: "/invalid",
+          componentFile: "src/app/home.component.ts",
+          label: "Invalid",
+          description: "Has invalid id shape",
+        },
+        {
+          id: "screen_home",
+          path: "/",
+          componentFile: "src/app/home.component.ts",
+          label: "Home",
+          description: "Valid",
+        },
+      ]),
+      // Turn 2 for the valid screen only — the invalid one is skipped.
+      TURN2_HOME_RESPONSE,
+      // Turn 3
+      JSON.stringify([]),
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    const result = await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: [],
+      fileToolContext: {
+        owner: "o",
+        repo: "r",
+        branch: "main",
+        token: "t",
+        fileTree: TREE,
+      },
+    });
+
+    // Both screens are still present, with the invalid-id one carrying empty
+    // variants (it was skipped, not crashed).
+    expect(result.screens).toHaveLength(2);
+    const invalid = result.screens.find((s) => s.id === "screen_Invalid")!;
+    expect(invalid).toBeDefined();
+    expect(invalid.variants).toEqual([]);
+    const home = result.screens.find((s) => s.id === "screen_home")!;
+    expect(home.variants).toHaveLength(1);
+    // Exactly 3 adapter calls: Turn 1, Turn 2 for the valid screen, Turn 3.
+    expect(adapter.calls).toHaveLength(3);
+  });
+
   it("still extracts variants when componentFile is only in fileTree (not preloaded)", async () => {
     const adapter = createMockAdapter([
       JSON.stringify([

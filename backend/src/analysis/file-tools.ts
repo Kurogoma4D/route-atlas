@@ -13,7 +13,7 @@
  * Reference: issue #90
  */
 
-import { minimatch } from "minimatch";
+import { Minimatch } from "minimatch";
 import type { Tool } from "@github/copilot-sdk";
 import {
   fetchSingleFileContent,
@@ -88,6 +88,14 @@ export const GREP_FILES_MAX_FILE_BYTES = 1_000_000;
  * Larger files are truncated to this length and annotated with a marker.
  */
 export const READ_FILE_MAX_BYTES = 200_000;
+
+/**
+ * Maximum length (characters) of a glob pattern passed to `searchFiles` or
+ * `grepFiles`. LLM-supplied patterns are passed to `minimatch`, which compiles
+ * them into regexes; adversarially long or complex patterns could induce
+ * blocking event-loop stalls. We cap the pattern length defensively.
+ */
+export const MAX_GLOB_PATTERN_LENGTH = 200;
 
 // ---------------------------------------------------------------------------
 // Shared helpers
@@ -262,10 +270,17 @@ export function createSearchFilesTool(ctx: FileToolContext): Tool<unknown> {
       if (pattern.length === 0) {
         return "Error: searchFiles 'pattern' must be a non-empty string.";
       }
+      if (pattern.length > MAX_GLOB_PATTERN_LENGTH) {
+        return `Error: searchFiles 'pattern' must be at most ${MAX_GLOB_PATTERN_LENGTH} characters.`;
+      }
 
+      // Compile the glob once, then match each file-tree entry against the
+      // compiled matcher. Calling `minimatch(path, pattern)` per entry would
+      // re-parse the glob N times.
+      const mm = new Minimatch(pattern);
       const matches: string[] = [];
       for (const entry of ctx.fileTree) {
-        if (minimatch(entry.path, pattern)) {
+        if (mm.match(entry.path)) {
           matches.push(entry.path);
           if (matches.length >= SEARCH_FILES_MAX_RESULTS) break;
         }
@@ -294,15 +309,22 @@ export function createSearchFilesTool(ctx: FileToolContext): Tool<unknown> {
 export function createGrepFilesTool(ctx: FileToolContext): Tool<unknown> {
   // Cache line-split arrays per file so repeated grepFiles invocations within
   // one analysis run don't re-split the same large files over and over.
-  // Populated lazily on first access per path.
-  const splitCache = new Map<string, string[]>();
+  // Each cache entry stores both the raw lines AND their pre-lowercased form
+  // so repeated greps pay the lowercasing cost only once per file+line.
+  interface GrepLines {
+    raw: string[];
+    lower: string[];
+  }
+  const splitCache = new Map<string, GrepLines>();
 
-  function getLines(path: string, content: string): string[] {
+  function getLines(path: string, content: string): GrepLines {
     const cached = splitCache.get(path);
     if (cached !== undefined) return cached;
-    const lines = content.split("\n");
-    splitCache.set(path, lines);
-    return lines;
+    const raw = content.split("\n");
+    const lower = raw.map((line) => line.toLowerCase());
+    const entry: GrepLines = { raw, lower };
+    splitCache.set(path, entry);
+    return entry;
   }
 
   return {
@@ -340,19 +362,28 @@ export function createGrepFilesTool(ctx: FileToolContext): Tool<unknown> {
       if (query.length === 0) {
         return "Error: grepFiles 'query' must be a non-empty string.";
       }
+      if (
+        args.glob !== undefined &&
+        args.glob.length > MAX_GLOB_PATTERN_LENGTH
+      ) {
+        return `Error: grepFiles 'glob' must be at most ${MAX_GLOB_PATTERN_LENGTH} characters.`;
+      }
 
       const lowered = query.toLowerCase();
       const matches: string[] = [];
+      // Compile the glob once up-front rather than re-parsing it per-entry.
+      const globMatcher =
+        args.glob !== undefined ? new Minimatch(args.glob) : null;
 
       for (const [path, content] of ctx.preloadedContents) {
-        if (args.glob && !minimatch(path, args.glob)) continue;
+        if (globMatcher && !globMatcher.match(path)) continue;
         // Skip pathologically large files to bound scan time.
         if (content.length > GREP_FILES_MAX_FILE_BYTES) continue;
 
-        const lines = getLines(path, content);
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].toLowerCase().includes(lowered)) {
-            matches.push(`${path}:${i + 1}:${lines[i].trim()}`);
+        const { raw, lower } = getLines(path, content);
+        for (let i = 0; i < raw.length; i++) {
+          if (lower[i].includes(lowered)) {
+            matches.push(`${path}:${i + 1}:${raw[i].trim()}`);
             if (matches.length >= GREP_FILES_MAX_RESULTS) break;
           }
         }
