@@ -342,6 +342,100 @@ describe("AnalysisPipeline", () => {
 // Model selection helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Tool-assisted pipeline
+// ---------------------------------------------------------------------------
+
+describe("AnalysisPipeline with customTools", () => {
+  const fakeTool = {
+    name: "readFile",
+    description: "fake",
+    handler: () => "contents",
+  };
+
+  it("passes tools through to the adapter on Turn 2 and Turn 3", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      candidateComponentPaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
+      customTools: [fakeTool],
+    });
+
+    // First call is Turn 1 — no tools attached.
+    expect(adapter.calls[0]!.tools).toBeUndefined();
+    // Turn 2 calls (one per screen) should carry the tool set.
+    for (let i = 1; i <= 3; i++) {
+      expect(adapter.calls[i]!.tools).toEqual([fakeTool]);
+    }
+    // Turn 3 should also carry the tool set.
+    expect(adapter.calls[4]!.tools).toEqual([fakeTool]);
+  });
+
+  it("omits the full source from Turn 2 / Turn 3 prompts when tools are in use", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      candidateComponentPaths: SAMPLE_COMPONENT_FILES.map((f) => f.path),
+      customTools: [fakeTool],
+    });
+
+    // The raw component contents should NOT appear verbatim in Turn 2 / Turn 3
+    // prompts — the model is expected to fetch them via tools.
+    const turn2Prompts = adapter.calls
+      .slice(1, 4)
+      .map((c) => c.messages[c.messages.length - 1]!.content);
+    for (const prompt of turn2Prompts) {
+      expect(prompt).not.toContain("*ngIf=\"loading\"");
+      expect(prompt).toContain("readFile");
+    }
+
+    const turn3Prompt =
+      adapter.calls[4]!.messages[adapter.calls[4]!.messages.length - 1]!
+        .content;
+    expect(turn3Prompt).not.toContain("router.navigate(['/dashboard'])");
+    expect(turn3Prompt).toContain("readFile");
+  });
+
+  it("falls back to the legacy embed-contents flow when no tools are provided", async () => {
+    const adapter = createMockAdapter([
+      TURN1_RESPONSE,
+      TURN2_HOME_RESPONSE,
+      TURN2_DASHBOARD_RESPONSE,
+      TURN2_LOGIN_RESPONSE,
+      TURN3_RESPONSE,
+    ]);
+    const pipeline = new AnalysisPipeline(adapter);
+
+    await pipeline.run({
+      framework: "angular",
+      routingFiles: [SAMPLE_ROUTING_FILE],
+      componentFiles: SAMPLE_COMPONENT_FILES,
+    });
+
+    for (const call of adapter.calls) {
+      expect(call.tools).toBeUndefined();
+    }
+  });
+});
+
 describe("isSupportedModel", () => {
   it("accepts all supported models", () => {
     for (const model of SUPPORTED_MODELS) {

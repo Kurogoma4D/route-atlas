@@ -43,6 +43,7 @@ import {
 } from "../analysis/analysis-pipeline.js";
 import type { SupportedModel } from "../analysis/analysis-pipeline.js";
 import type { CopilotClientManager } from "../analysis/copilot-client.js";
+import { createCustomTools } from "../analysis/custom-tools.js";
 import { JobStore, getInMemoryJobKV } from "./job-store.js";
 import type { PackageJson } from "../analysis/framework-detector.js";
 
@@ -446,13 +447,18 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    const componentFiles = await fetchFileContents(
+    // With custom tools in place the LLM pulls file contents on demand, so
+    // we only need the *list* of candidate component files — not their full
+    // contents — to avoid embedding 10k+ tokens of source in the prompt.
+    const candidateComponentPaths = componentEntries.map((e) => e.path);
+
+    const customTools = createCustomTools({
       owner,
       repo,
-      componentEntries,
+      branch,
       token,
-      { maxFiles: 50 },
-    );
+      allFiles,
+    });
 
     // Send file count metadata
     await jobStore.sendProgress(jobId, {
@@ -460,7 +466,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       message: "ファイルを取得しました",
       metadata: {
         routingFileCount: routingFiles.length,
-        componentFileCount: componentFiles.length,
+        componentFileCount: candidateComponentPaths.length,
       },
     });
 
@@ -476,7 +482,8 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const result = await pipeline.run({
       framework,
       routingFiles,
-      componentFiles,
+      candidateComponentPaths,
+      customTools,
       model,
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {

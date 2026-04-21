@@ -29,6 +29,25 @@ state variations, and navigation transitions.
 IMPORTANT: Always respond with ONLY valid JSON — no markdown fences, no
 explanatory text before or after the JSON.`;
 
+/**
+ * Extended system prompt used when custom file-exploration tools are
+ * available. Adds explicit guidance on how and when to call the tools
+ * before emitting the final JSON answer.
+ */
+export const SYSTEM_PROMPT_WITH_TOOLS = `${SYSTEM_PROMPT}
+
+You have been given three custom tools to explore the repository on demand:
+
+  - readFile(path)              — fetch the full contents of a single file.
+  - searchFiles(pattern)        — list files whose path matches a glob.
+  - grepFiles(query, glob?)     — find files that contain a substring.
+
+Guidelines:
+  - Start by reading only the files that are directly relevant to the task.
+  - Use searchFiles / grepFiles when you need to discover additional files.
+  - Do NOT attempt to read every file — be selective to stay within budget.
+  - After exploration is complete, respond with ONLY the requested JSON.`;
+
 // ---------------------------------------------------------------------------
 // Turn 1 — Route / screen extraction
 // ---------------------------------------------------------------------------
@@ -341,6 +360,107 @@ Return a JSON array. If no variants are found, return an empty array [].
 \`\`\`
 ${componentSource}
 \`\`\``;
+}
+
+/**
+ * Tool-assisted Turn 2 prompt.
+ *
+ * Instead of embedding the component source, this variant instructs the LLM
+ * to call the `readFile` tool for the given path (and any helpers it deems
+ * necessary). The `lookForItems` list from {@link buildTurn2Prompt} is
+ * reused so variant detection semantics stay identical.
+ */
+export function buildTurn2PromptWithTools(
+  screenId: string,
+  componentFile: string,
+  framework: FrameworkName,
+): string {
+  const isAstro = isAstroFramework(framework);
+  const isAndroid = isAndroidFramework(framework);
+  const isIOS = isIOSFramework(framework);
+  const isFlutter = isFlutterFramework(framework);
+  const isReactNative = isReactNativeFramework(framework);
+
+  let lookForItems: string;
+
+  if (isReactNative) {
+    lookForItems = `- Loading states (ActivityIndicator, skeleton/shimmer components)
+- Error states (error message views, Alert.alert for errors, error boundaries)
+- Empty states (FlatList / SectionList ListEmptyComponent, no-data messages)
+- Platform-specific rendering (Platform.OS, Platform.select())
+- Responsive variants (useWindowDimensions(), Dimensions API)
+- React Query / SWR / Apollo loading/error/data states
+- Authentication-required states (login redirects, auth guards)
+- Permission-based rendering (role checks)
+- Other conditional rendering (feature flags, A/B tests)`;
+  } else if (isFlutter) {
+    lookForItems = `- Loading states (CircularProgressIndicator, LinearProgressIndicator, Shimmer / skeleton widgets)
+- Error states (error message widgets, SnackBar errors, AlertDialog for errors)
+- Empty states (no-data messages, empty list placeholders)
+- FutureBuilder / StreamBuilder with ConnectionState branching (waiting, active, done, error)
+- BlocBuilder / BlocConsumer state branching (BLoC pattern)
+- Consumer / Selector state branching (Riverpod / Provider)
+- AsyncValue.when() pattern (Riverpod)
+- Authentication-required states (login redirects, auth guards)
+- Permission-based rendering (role checks)
+- LayoutBuilder / MediaQuery responsive variants
+- Other conditional rendering (feature flags, platform checks)`;
+  } else if (isAndroid) {
+    lookForItems = `- Loading states (ProgressBar, CircularProgressIndicator, LinearProgressIndicator, shimmer/skeleton composables)
+- Error states (Snackbar, Toast, AlertDialog for errors, try-catch blocks with error UI)
+- Empty states (no-data messages, empty list placeholders, EmptyView)
+- Authentication-required states (login redirects, auth checks)
+- Permission-based rendering (role checks, admin-only sections)
+- Conditional rendering via "when" statements or "if" blocks that change displayed content
+- Other conditional rendering (feature flags, BuildConfig checks)`;
+  } else if (isIOS) {
+    lookForItems = `- Loading states (ProgressView in SwiftUI, UIActivityIndicatorView in UIKit, skeleton/shimmer views)
+- Error states (Alert in SwiftUI, UIAlertController in UIKit, error message views)
+- Empty states (no-data messages, empty list placeholders, ContentUnavailableView)
+- Authentication-required states (login redirects, auth checks)
+- Permission-based rendering (role checks, entitlement checks)
+- @ViewBuilder conditional rendering (if/else, switch statements inside view body)
+- @Environment / @EnvironmentObject / @State / @Binding driven state changes
+- Other conditional rendering (feature flags, #if DEBUG checks)`;
+  } else if (isAstro) {
+    lookForItems = `- Frontmatter conditionals (if/else in the --- block that change rendered content)
+- Astro.redirect() calls in frontmatter (server-side redirects)
+- Loading states (skeleton components, loading placeholders)
+- Error states (error message components, try-catch in frontmatter)
+- Empty states (no-data messages, empty list placeholders)
+- Authentication-required states (auth checks in frontmatter, Astro.redirect to login)
+- Permission-based rendering (role checks)
+- Dynamic rendering based on Astro.request, Astro.url, Astro.params
+- Other conditional rendering (feature flags, environment checks via import.meta.env)`;
+  } else {
+    lookForItems = `- Loading states (spinners, skeletons, suspense boundaries)
+- Error states (error boundaries, catch blocks, error UI)
+- Empty states (no-data messages, empty list placeholders)
+- Authentication-required states (login redirects, auth guards)
+- Permission-based rendering (role checks, admin-only sections)
+- Responsive variants (conditional rendering based on screen size, breakpoint checks in component logic)
+- Other conditional rendering (feature flags, A/B tests)`;
+  }
+
+  return `Analyze the component source code for screen "${screenId}" and extract all state variants.
+
+The component is located at:
+  ${componentFile}
+
+Call the \`readFile\` tool with that path to inspect the source. You may also
+use \`grepFiles\` / \`searchFiles\` if you need to follow imports or helper
+modules — but only fetch what is necessary.
+
+Look for:
+${lookForItems}
+
+For each variant return:
+- "id": unique snake_case identifier (e.g. "variant_loading_dashboard")
+- "label": human-readable name (e.g. "Loading state")
+- "condition": description of when this variant appears
+- "type": one of "loading" | "error" | "empty" | "auth_required" | "permission" | "responsive" | "conditional"
+
+Return a JSON array. If no variants are found, return an empty array [].`;
 }
 
 // ---------------------------------------------------------------------------
@@ -681,4 +801,118 @@ Only include transitions between the known screens listed above.
 Return a JSON array. If no transitions are found, return an empty array [].
 
 ${filesSection}`;
+}
+
+/**
+ * Tool-assisted Turn 3 prompt.
+ *
+ * Instead of embedding navigation snippets, the LLM is handed the list of
+ * candidate component files and asked to pull what it needs via tools. This
+ * keeps the prompt small even when the repository is large.
+ */
+export function buildTurn3PromptWithTools(
+  screens: { id: string; path: string; componentFile?: string }[],
+  candidateFiles: string[],
+  framework: FrameworkName,
+): string {
+  const screenList = screens
+    .map((s) =>
+      s.componentFile
+        ? `- ${s.id} (${s.path}) — ${s.componentFile}`
+        : `- ${s.id} (${s.path})`,
+    )
+    .join("\n");
+
+  const filesList = candidateFiles.map((p) => `- ${p}`).join("\n");
+
+  const isAstro = isAstroFramework(framework);
+  const isAndroid = isAndroidFramework(framework);
+  const isIOS = isIOSFramework(framework);
+  const isFlutter = isFlutterFramework(framework);
+  const isReactNative = isReactNativeFramework(framework);
+
+  let lookForItems: string;
+
+  if (isReactNative) {
+    lookForItems = `- navigation.navigate('ScreenName'), navigation.push('ScreenName')
+- navigation.goBack(), navigation.popToTop()
+- navigation.replace('ScreenName')
+- router.push(), router.replace() (Expo Router)
+- <Link href="..."> (Expo Router)
+- CommonActions.navigate(), StackActions.push()
+- Deep Link configuration (linking config)
+- navigation.reset() (stack reset)
+- navigation.dispatch() with custom actions`;
+  } else if (isFlutter) {
+    lookForItems = `- Navigator.push(), Navigator.pushNamed(), Navigator.pushReplacement(), Navigator.pushReplacementNamed()
+- Navigator.pop(), Navigator.popUntil(), Navigator.popAndPushNamed()
+- Navigator.of(context).push(), Navigator.of(context).pushNamed()
+- context.go(), context.push(), context.goNamed(), context.pushNamed() (go_router)
+- GoRouter.of(context).go(), GoRouter.of(context).push()
+- context.router.push(), context.router.pushRoute(), context.router.pop() (auto_route)
+- showDialog(), showModalBottomSheet(), showCupertinoDialog(), showCupertinoModalPopup()
+- showGeneralDialog(), showBottomSheet()`;
+  } else if (isAndroid) {
+    lookForItems = `- NavController.navigate(), findNavController().navigate()
+- navController.navigate("route") (Compose Navigation)
+- startActivity(Intent(...)), startActivityForResult()
+- FragmentTransaction.replace(), .add(), .show()
+- popBackStack(), navigateUp()
+- <action> elements in Navigation XML (app:destination attributes)
+- Deep Link definitions (via <deepLink> elements or NavDeepLink)
+- Safe Args navigation calls`;
+  } else if (isIOS) {
+    lookForItems = `- NavigationLink(destination:), NavigationLink(value:)
+- .navigationDestination(for:) modifier
+- .sheet(), .fullScreenCover(), .popover() (modal transitions)
+- navigationController?.pushViewController(), .present() (UIKit push/modal)
+- performSegue(withIdentifier:), Storyboard <segue> elements
+- coordinator.navigate(to:) (Coordinator pattern)
+- TabView tab switching
+- dismiss(), navigationController?.popViewController() (back navigation)`;
+  } else if (isAstro) {
+    lookForItems = `- <a href="..."> (Astro uses standard HTML anchor tags for navigation by default)
+- Astro.redirect() in frontmatter (server-side redirects)
+- <ViewTransitions /> component usage (enables client-side navigation via View Transitions API)
+- window.location / location.href assignments in <script> tags
+- Form submit handlers that navigate
+- data-astro-reload attribute (forces full page reload)
+- Programmatic navigation in client-side island components (React/Vue/Svelte within client:* directives)`;
+  } else {
+    lookForItems = `- <Link>, <a href="...">, routerLink
+- router.push(), router.navigate(), navigate()
+- redirect(), useNavigate()
+- window.location / location.href assignments
+- <form action="..."> submit targets
+- <meta http-equiv="refresh"> redirects
+- Form submit handlers that navigate`;
+  }
+
+  return `Extract all screen-to-screen transitions (navigations) in the repository.
+
+Known screens:
+${screenList}
+
+Candidate component files (there may be more — use searchFiles / grepFiles to
+discover additional ones if helpful):
+${filesList}
+
+Use the \`readFile\` tool to inspect the component files you think most likely
+to contain navigation calls (typically the screen component files listed
+above). Use \`grepFiles\` to locate additional navigation call sites across
+the repo. Do NOT read every file — be selective.
+
+Look for:
+${lookForItems}
+
+For each transition return:
+- "id": unique snake_case identifier (e.g. "transition_home_to_login")
+- "from": the source screen id
+- "to": the target screen id
+- "trigger": description of what triggers the navigation (e.g. "Click login button")
+- "method": the code method used
+- "condition": (optional) any condition that must be true for the transition to occur
+
+Only include transitions between the known screens listed above.
+Return a JSON array. If no transitions are found, return an empty array [].`;
 }
