@@ -46,48 +46,77 @@ vi.mock("../analysis/framework-detector.js", async () => {
   };
 });
 
-vi.mock("../analysis/github-file-fetcher.js", () => ({
-  fetchFileTree: vi.fn(async () => ({
-    files: [
-      {
-        path: "package.json",
-        type: "blob",
-        sha: "abc",
-        mode: "100644",
-        url: "",
-      },
-      {
-        path: "app/page.tsx",
-        type: "blob",
-        sha: "def",
-        mode: "100644",
-        url: "",
-      },
-    ],
-    truncated: false,
-  })),
-  filterFilesByPatterns: vi.fn(
-    (files: Array<{ path: string }>, patterns: string[]) => {
-      return files.filter((f: { path: string }) =>
-        patterns.some((p: string) => {
-          const ext = p.split(".").pop();
-          return f.path.endsWith(`.${ext}`) || f.path === "package.json";
-        }),
+vi.mock("../analysis/github-file-fetcher.js", () => {
+  class GitHubApiErrorMock extends Error {
+    public readonly status: number;
+    constructor(status: number, message: string) {
+      super(`GitHub API error (${status}): ${message}`);
+      this.name = "GitHubApiError";
+      this.status = status;
+    }
+  }
+  class GitHubRateLimitErrorMock extends Error {
+    public readonly retryAfterSeconds: number;
+    constructor(retryAfterSeconds: number) {
+      super(
+        `GitHub API rate limit exceeded. Retry after ${retryAfterSeconds}s.`,
       );
-    },
-  ),
-  fetchFileContents: vi.fn(
-    async (_owner: string, _repo: string, files: Array<{ path: string }>) => {
-      return files.map((f: { path: string }) => ({
-        path: f.path,
-        content:
-          f.path === "package.json"
-            ? '{"dependencies":{"next":"14.0.0"}}'
-            : "export default function Page() { return <div>Hello</div>; }",
-      }));
-    },
-  ),
-}));
+      this.name = "GitHubRateLimitError";
+      this.retryAfterSeconds = retryAfterSeconds;
+    }
+  }
+  return {
+    fetchFileTree: vi.fn(async () => ({
+      files: [
+        {
+          path: "package.json",
+          type: "blob",
+          sha: "abc",
+          mode: "100644",
+          url: "",
+        },
+        {
+          path: "app/page.tsx",
+          type: "blob",
+          sha: "def",
+          mode: "100644",
+          url: "",
+        },
+      ],
+      truncated: false,
+    })),
+    filterFilesByPatterns: vi.fn(
+      (files: Array<{ path: string }>, patterns: string[]) => {
+        return files.filter((f: { path: string }) =>
+          patterns.some((p: string) => {
+            const ext = p.split(".").pop();
+            return f.path.endsWith(`.${ext}`) || f.path === "package.json";
+          }),
+        );
+      },
+    ),
+    fetchFileContents: vi.fn(
+      async (_owner: string, _repo: string, files: Array<{ path: string }>) => {
+        return files.map((f: { path: string }) => ({
+          path: f.path,
+          content:
+            f.path === "package.json"
+              ? '{"dependencies":{"next":"14.0.0"}}'
+              : "export default function Page() { return <div>Hello</div>; }",
+        }));
+      },
+    ),
+    fetchSingleFileContent: vi.fn(
+      async (_owner: string, _repo: string, file: { path: string }) => {
+        return file.path === "package.json"
+          ? '{"dependencies":{"next":"14.0.0"}}'
+          : "export default function Page() { return <div>Hello</div>; }";
+      },
+    ),
+    GitHubApiError: GitHubApiErrorMock,
+    GitHubRateLimitError: GitHubRateLimitErrorMock,
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Cookie-aware request helper

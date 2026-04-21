@@ -446,13 +446,10 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       return true;
     });
 
-    const componentFiles = await fetchFileContents(
-      owner,
-      repo,
-      componentEntries,
-      token,
-      { maxFiles: 50 },
-    );
+    // Instead of eagerly fetching component file contents, we let Copilot
+    // pull them on demand via the custom tools. We still cap the list of
+    // candidates that we advertise to the model so the prompt stays small.
+    const componentFilePaths = componentEntries.map((f) => f.path);
 
     // Send file count metadata
     await jobStore.sendProgress(jobId, {
@@ -460,7 +457,7 @@ async function runPipeline(params: PipelineParams): Promise<void> {
       message: "ファイルを取得しました",
       metadata: {
         routingFileCount: routingFiles.length,
-        componentFileCount: componentFiles.length,
+        componentFileCount: componentFilePaths.length,
       },
     });
 
@@ -476,7 +473,14 @@ async function runPipeline(params: PipelineParams): Promise<void> {
     const result = await pipeline.run({
       framework,
       routingFiles,
-      componentFiles,
+      componentFilePaths,
+      fileToolsContext: {
+        owner,
+        repo,
+        branch,
+        token,
+        files: allFiles,
+      },
       model,
       onProgress: (stage) => {
         if (stage === "analyzing_variants") {

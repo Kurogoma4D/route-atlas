@@ -26,8 +26,18 @@ export const SYSTEM_PROMPT = `You are a source code analysis assistant.
 You analyze source code and extract structured information about screens,
 state variations, and navigation transitions.
 
-IMPORTANT: Always respond with ONLY valid JSON — no markdown fences, no
-explanatory text before or after the JSON.`;
+You have access to three custom tools for exploring the repository on demand:
+- readFile({ path }): fetch the full contents of a file by its repository path.
+- searchFiles({ pattern }): list file paths matching a glob pattern.
+- grepFiles({ query, glob? }): find lines containing a substring, optionally
+  restricted to files matching a glob.
+
+Call these tools whenever you need to inspect a file's contents. Do NOT
+guess — read the file first. Prefer precise globs and queries to keep the
+scan cheap. Stop calling tools once you have enough context to answer.
+
+IMPORTANT: Your FINAL message must be ONLY valid JSON — no markdown fences,
+no explanatory text before or after the JSON.`;
 
 // ---------------------------------------------------------------------------
 // Turn 1 — Route / screen extraction
@@ -36,10 +46,19 @@ explanatory text before or after the JSON.`;
 export function buildTurn1Prompt(
   framework: string,
   routingFiles: { path: string; content: string }[],
+  candidateComponentPaths: string[] = [],
 ): string {
   const filesSection = routingFiles
     .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
     .join("\n\n");
+
+  const componentListSection =
+    candidateComponentPaths.length > 0
+      ? `\nCandidate component files available to read via the \`readFile\` tool (truncated to the first 200):\n${candidateComponentPaths
+          .slice(0, 200)
+          .map((p) => `- ${p}`)
+          .join("\n")}\n`
+      : "";
 
   const isPlainHtml = framework === "plain-html";
   const isAstro = isAstroFramework(framework);
@@ -244,6 +263,11 @@ Return a JSON array of screen objects. Example:
   }
 ]
 
+If the routing definition below references a component by symbol (not by
+path) and you are unsure which file defines it, use \`searchFiles\` or
+\`grepFiles\` to locate it, then \`readFile\` to confirm, before filling in
+\`componentFile\`.
+${componentListSection}
 ${filesSection}`;
 }
 
@@ -254,7 +278,6 @@ ${filesSection}`;
 export function buildTurn2Prompt(
   screenId: string,
   componentFile: string,
-  componentSource: string,
   framework: FrameworkName,
 ): string {
   const isAstro = isAstroFramework(framework);
@@ -324,7 +347,9 @@ export function buildTurn2Prompt(
 - Other conditional rendering (feature flags, A/B tests)`;
   }
 
-  return `Analyze the following component source code for screen "${screenId}" and extract all state variants.
+  return `Analyze the component source for screen "${screenId}" (defined in \`${componentFile}\`) and extract all state variants.
+
+Use the \`readFile\` tool to load \`${componentFile}\`. If that file delegates rendering to child components, helpers, or hooks, follow up with additional \`readFile\` (or \`grepFiles\`) calls as needed to understand which states the screen renders.
 
 Look for:
 ${lookForItems}
@@ -335,12 +360,7 @@ For each variant return:
 - "condition": description of when this variant appears
 - "type": one of "loading" | "error" | "empty" | "auth_required" | "permission" | "responsive" | "conditional"
 
-Return a JSON array. If no variants are found, return an empty array [].
-
-### File: ${componentFile}
-\`\`\`
-${componentSource}
-\`\`\``;
+Return a JSON array. If no variants are found, return an empty array [].`;
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +439,70 @@ export function getNavigationPatterns(framework: FrameworkName): RegExp[] {
     /window\.location|location\.href/,
     /\bhref\s*=\s*["']/,
     /form\s+action\s*=/i,
+  ];
+}
+
+function getNavigationQueryHints(framework: FrameworkName): string[] {
+  if (isReactNativeFramework(framework)) {
+    return [
+      "navigation.navigate",
+      "navigation.push",
+      "router.push",
+      "router.replace",
+      "<Link",
+    ];
+  }
+  if (isFlutterFramework(framework)) {
+    return [
+      "Navigator.push",
+      "Navigator.of(context).push",
+      "context.go",
+      "context.push",
+      "showDialog",
+    ];
+  }
+  if (isAndroidFramework(framework)) {
+    return [
+      "findNavController().navigate",
+      "navController.navigate",
+      "startActivity",
+      "popBackStack",
+      "app:destination",
+    ];
+  }
+  if (isIOSFramework(framework)) {
+    return [
+      "NavigationLink",
+      ".navigationDestination",
+      ".sheet(",
+      "pushViewController",
+      "performSegue",
+    ];
+  }
+  if (isAstroFramework(framework)) {
+    return [
+      "href=\"",
+      "Astro.redirect",
+      "window.location",
+      "location.href",
+      "data-astro-reload",
+    ];
+  }
+  if (isEmberFramework(framework)) {
+    return [
+      "LinkTo",
+      "transitionTo",
+      "replaceWith",
+      "router.transitionTo",
+      "href=\"",
+    ];
+  }
+  return [
+    "router.push",
+    "navigate(",
+    "redirect(",
+    "href=\"",
+    "window.location",
   ];
 }
 
@@ -519,25 +603,25 @@ export function extractRelevantSnippets(
 // ---------------------------------------------------------------------------
 
 export function buildTurn3Prompt(
-  screens: { id: string; path: string }[],
-  allComponentSources: { path: string; content: string }[],
+  screens: { id: string; path: string; componentFile?: string }[],
+  candidateComponentPaths: string[],
   framework: FrameworkName,
 ): string {
-  const screenList = screens.map((s) => `- ${s.id} (${s.path})`).join("\n");
+  const screenList = screens
+    .map((s) =>
+      s.componentFile
+        ? `- ${s.id} (${s.path}) — defined in ${s.componentFile}`
+        : `- ${s.id} (${s.path})`,
+    )
+    .join("\n");
 
-  // Extract only navigation-relevant snippets to reduce token usage
-  const navPatterns = getNavigationPatterns(framework);
-  const snippetFiles: { path: string; content: string }[] = [];
-  for (const f of allComponentSources) {
-    const snippet = extractRelevantSnippets(f.content, navPatterns);
-    if (snippet !== null) {
-      snippetFiles.push({ path: f.path, content: snippet });
-    }
-  }
-
-  const filesSection = snippetFiles
-    .map((f) => `### File: ${f.path}\n\`\`\`\n${f.content}\n\`\`\``)
-    .join("\n\n");
+  const fileListSection =
+    candidateComponentPaths.length > 0
+      ? `Candidate files that may contain navigation calls (truncated to the first 200):\n${candidateComponentPaths
+          .slice(0, 200)
+          .map((p) => `- ${p}`)
+          .join("\n")}\n`
+      : "No candidate file list available — use `searchFiles` to discover sources.\n";
 
   const isAstro = isAstroFramework(framework);
   const isAndroid = isAndroidFramework(framework);
@@ -661,7 +745,19 @@ export function buildTurn3Prompt(
                       ? `"LinkTo", "transitionTo", "replaceWith", "router.transitionTo"`
                       : `"Link", "router.push", "window.location"`;
 
-  return `Analyze the following component source code excerpts (showing only navigation-related sections) and extract all screen-to-screen transitions (navigations).
+  const queryHints = getNavigationQueryHints(framework);
+  const patternHints = queryHints
+    .slice(0, 8)
+    .map((query) => `  - ${query}`)
+    .join("\n");
+
+  return `Identify all screen-to-screen transitions (navigations) between the known screens below.
+
+You do NOT have file contents inlined. Use the provided tools to discover navigation:
+1. Call \`grepFiles({ query, glob })\` with navigation keywords to locate candidate files. Useful queries for this framework include:
+${patternHints}
+2. For each promising file, call \`readFile({ path })\` to confirm the navigation target.
+3. Keep scans focused — prefer a restrictive \`glob\` (e.g. the candidate list below) over scanning the whole repo.
 
 Known screens:
 ${screenList}
@@ -680,5 +776,5 @@ For each transition return:
 Only include transitions between the known screens listed above.
 Return a JSON array. If no transitions are found, return an empty array [].
 
-${filesSection}`;
+${fileListSection}`;
 }
